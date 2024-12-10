@@ -27,7 +27,7 @@ enum LibraryError {
     KeyNotStart {
         position: TextPosition,
     },
-    KeyNotEnd {
+    UnexpectedElement {
         position: TextPosition,
     },
     UnexpectedKey {
@@ -42,6 +42,11 @@ enum LibraryError {
         position: TextPosition,
         want: String,
         got: String,
+    },
+    BadPair {
+        position: TextPosition,
+        start: String,
+        end: String,
     },
     MultipleTrackLibraries,
     MultiplePlaylistArrays,
@@ -121,16 +126,22 @@ impl LibraryReader {
         };
         let element = start.local_name.clone();
         if let Some(name_check) = name {
-            assert_eq!(&start.local_name, name_check, "{}", self.parser.position());
+            if start.local_name != name_check {
+                return Err(LibraryError::BadEat {
+                    position: self.parser.position(),
+                    want: name_check.to_owned(),
+                    got: start.local_name.to_owned(),
+                });
+            }
         }
         let as_string = match element.as_str() {
             "true" => {
                 let _ = self.next();
-                element
+                element.clone()
             }
             "false" => {
                 let _ = self.next();
-                element
+                element.clone()
             }
             "string" => {
                 //
@@ -159,17 +170,25 @@ impl LibraryReader {
         };
 
         let XmlEvent::EndElement { name: end, .. } = self.peek() else {
-            return Err(LibraryError::KeyNotEnd {
+            return Err(LibraryError::UnexpectedElement {
                 position: self.parser.position(),
             });
         };
+        if end.local_name != element {
+            return Err(LibraryError::BadPair {
+                position: self.parser.position(),
+                start: element,
+                end: end.local_name.clone(),
+            });
+        }
         if let Some(name_check) = name {
-            assert_eq!(
-                end.local_name.clone(),
-                name_check,
-                "{}",
-                self.parser.position()
-            );
+            if end.local_name != name_check {
+                return Err(LibraryError::BadEat {
+                    position: self.parser.position(),
+                    want: name_check.to_owned(),
+                    got: end.local_name.to_owned(),
+                });
+            }
         }
         self.next()?;
 
@@ -201,6 +220,8 @@ struct Track {
     album_rating: usize,
 
     compiltion: bool,
+
+    location: String,
 }
 
 fn get_track(lr: &mut LibraryReader) -> Track {
@@ -220,7 +241,6 @@ fn get_track(lr: &mut LibraryReader) -> Track {
                     | "File Folder Count"
                     | "Kind"
                     | "Library Folder Count"
-                    | "Location"
                     | "Movement Count"
                     | "Movement Name"
                     | "Normalization"
@@ -296,7 +316,19 @@ fn get_track(lr: &mut LibraryReader) -> Track {
                     "Date Added" => {
                         the_track.date_added = value.parse::<DateTime<Utc>>().expect("da?")
                     }
+                    "Location" => {
+                        the_track.location = match urlencoding::decode(&value) {
+                            Err(_) => {
+                                let the_title = the_track.tag.title().unwrap_or("some track");
+                                println!("Warning: The location of \"{the_title}\" in the library appears corrupt.
+The raw value is:
+{value}",);
+                                "".to_owned()
+                            },
+                            Ok(ok) => ok.to_string()
 
+}
+                    }
                     "Play Count" => {
                         the_track.play_count = value.parse::<usize>().expect("play count?");
                         the_track.tag.add_frame(Frame::text("PCNT", value));
@@ -432,16 +464,13 @@ fn get_playlist(lr: &mut LibraryReader) -> Result<Playlist, LibraryError> {
                                 "Description" => the_playlist.description = value,
                                 "Playlist Persistent ID" => the_playlist.persistent_id = value,
                                 "Parent Persistent ID" => the_playlist.parent_persistent_id = value,
-                                "Folder" => {
-                                    match value.as_str() {
-                                        "true" => the_playlist.folder = true,
-                                        "false" => the_playlist.folder = false,
-                                        _ => panic!("Unexpected")
-                                    }
-                                }
+                                "Folder" => match value.as_str() {
+                                    "true" => the_playlist.folder = true,
+                                    "false" => the_playlist.folder = false,
+                                    _ => panic!("Unexpected"),
+                                },
                                 "Master" | "Playlist ID" | "Smart Info" | "Smart Criteria"
-                                | "Distinguished Kind" | "Music"  | "Visible"
-                                | "All Items" => {
+                                | "Distinguished Kind" | "Music" | "Visible" | "All Items" => {
                                     // skip these
                                 }
                                 _ => panic!(
@@ -579,6 +608,7 @@ fn main() -> Result<(), LibraryError> {
             for id in &playlist.items {
                 let track = tracks.get(id).expect("missing track id");
                 println!("  {} ({}) ", track.tag.title().unwrap(), track.play_count);
+                println!("  - {}", track.location);
             }
         }
     }
