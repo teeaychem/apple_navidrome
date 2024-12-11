@@ -1,11 +1,8 @@
-use std::fs::File;
-use std::io::Write;
-use std::path::Path;
 use xml::common::Position;
 use xml::reader::XmlEvent;
 
 use crate::{
-    structs::{playlist::Playlist, TrackID, TrackMap},
+    structs::playlist::Playlist,
     xml_reader::{self},
 };
 

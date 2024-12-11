@@ -1,7 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
-use serde::{Deserialize, Serialize};
 
 use crate::xml_reader::{self};
 
@@ -18,7 +18,7 @@ pub struct Playlist {
 }
 
 impl Playlist {
-    pub fn export_m3u8(
+    pub fn export_m3u(
         &self,
         path: &Path,
         tracks: &TrackMap,
@@ -28,7 +28,6 @@ impl Playlist {
         match File::create(playlist_path.clone()) {
             Ok(mut file) => {
                 writeln!(file, "#EXTM3U")?;
-                writeln!(file, "#EXTENC:UTF-8")?;
                 writeln!(file, "#PLAYLIST:{}", self.name)?;
                 for id in &self.track_ids {
                     let track = match tracks.get(id) {
@@ -41,10 +40,13 @@ impl Playlist {
                         }
                     };
 
-                    writeln!(file, "#EXTINF:{},{} - {}",
+                    writeln!(
+                        file,
+                        "#EXTINF:{},{} - {}",
                         track.duration.as_secs(),
-                        track.artist,
-                        track.title)?;
+                        track.artist.clone().unwrap_or("[No artist]".to_string()),
+                        track.title.clone().unwrap_or("[No title]".to_string())
+                    )?;
                     let abs_pth = &track.location;
                     writeln!(file, "{}", abs_pth)?;
                 }
