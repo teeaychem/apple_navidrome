@@ -1,12 +1,13 @@
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+use serde::{Deserialize, Serialize};
 
 use crate::xml_reader::{self};
 
 use super::*;
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 pub struct Playlist {
     pub name: String,
     pub description: String,

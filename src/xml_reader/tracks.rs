@@ -1,9 +1,15 @@
 use chrono::{DateTime, Utc};
-use std::{collections::HashMap, num::ParseIntError, time::Duration};
+use std::{num::ParseIntError, time::Duration};
 
 use xml::{common::Position, reader::XmlEvent};
 
-use crate::{structs::{track::{Track, TrackErr}, TrackID, TrackMap}, xml_reader::{self}};
+use crate::{
+    structs::{
+        track::{Track, TrackErr},
+        Library, TrackID,
+    },
+    xml_reader::{self},
+};
 
 use super::LibraryXmlReader;
 
@@ -19,14 +25,14 @@ impl From<ParseIntError> for TrackErr {
     }
 }
 
-pub fn get_track(lr: &mut xml_reader::LibraryXmlReader) -> Result<Track, TrackErr> {
-    let _ = lr.forward();
+pub fn get_track(reader: &mut xml_reader::LibraryXmlReader) -> Result<Track, TrackErr> {
+    let _ = reader.forward();
     let mut the_track = Track::default();
     loop {
-        match lr.peek() {
+        match reader.peek() {
             XmlEvent::StartElement { .. } => {
-                let key = lr.element_as_string(Some("key")).unwrap();
-                let value = lr.element_as_string(None).unwrap();
+                let key = reader.element_as_string(Some("key")).unwrap();
+                let value = reader.element_as_string(None).unwrap();
                 match key.as_str() {
                     // skipped keys
                     "Album Rating Computed" => {}
@@ -104,7 +110,7 @@ pub fn get_track(lr: &mut xml_reader::LibraryXmlReader) -> Result<Track, TrackEr
             }
             XmlEvent::EndElement { name } => {
                 if name.local_name == "dict" {
-                    let _ = lr.forward();
+                    let _ = reader.forward();
                     break;
                 } else {
                     panic!();
@@ -116,36 +122,37 @@ pub fn get_track(lr: &mut xml_reader::LibraryXmlReader) -> Result<Track, TrackEr
     Ok(the_track)
 }
 
-pub fn get_tracks(
-    lr: &mut LibraryXmlReader,
-) -> Result<TrackMap, xml_reader::err::LibraryXmlReader> {
-    let mut track_map = TrackMap::new();
-    // process each track
-    lr.eat_start("dict")?;
-    loop {
-        match lr.peek() {
-            XmlEvent::StartElement { name, .. } => {
-                //
-                if name.local_name == "key" {
-                    let id = lr
-                        .element_as_string(Some("key"))
-                        .unwrap()
-                        .parse::<usize>()
-                        .expect("id?");
-                    let track = get_track(lr)?;
-                    assert_eq!(id, track.id);
-                    track_map.insert(id, track);
-                } else {
-                    panic!("Failed to process track {}", lr.parser.position());
+impl Library {
+    pub fn import_tracks(
+        &mut self,
+        reader: &mut LibraryXmlReader,
+    ) -> Result<(), xml_reader::err::LibraryXmlReader> {
+        // process each track
+        reader.eat_start("dict")?;
+        loop {
+            match reader.peek() {
+                XmlEvent::StartElement { name, .. } => {
+                    //
+                    if name.local_name == "key" {
+                        let id = reader
+                            .element_as_string(Some("key"))
+                            .unwrap()
+                            .parse::<usize>()
+                            .expect("id?");
+                        let track = get_track(reader)?;
+                        assert_eq!(id, track.id);
+                        self.tracks.insert(id, track);
+                    } else {
+                        panic!("Failed to process track {}", reader.parser.position());
+                    }
                 }
+                XmlEvent::EndElement { .. } => {
+                    reader.eat_end("dict")?;
+                    break;
+                }
+                _ => {}
             }
-            XmlEvent::EndElement { .. } => {
-                lr.eat_end("dict")?;
-                break;
-            }
-            _ => {}
         }
+        Ok(())
     }
-    println!("track count: {}", track_map.keys().count());
-    Ok(track_map)
 }

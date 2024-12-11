@@ -1,9 +1,10 @@
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::{num::ParseIntError, time::Duration};
 
 use super::TrackID;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Track {
     pub album_artist: String,
     pub album_rating: usize,
