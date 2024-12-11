@@ -223,51 +223,61 @@ impl LibraryXmlReader {
     }
 }
 
-pub fn build_library(path: &Path) -> Result<Library, crate::xml_reader::err::LibraryXmlReader> {
-    let mut the_lib = Library::default();
-    let mut reader = LibraryXmlReader::new(path).unwrap();
-    // skip until library dictionary
-    loop {
-        if let Ok(xml::reader::XmlEvent::StartElement { name, .. }) = reader.forward() {
-            if name.local_name == "dict" {
-                break;
+impl Library {
+    pub fn from_xml(xml_path: &Path) -> Result<Self, crate::xml_reader::err::LibraryXmlReader> {
+        let mut the_lib = Library::default();
+        the_lib.import_xml(xml_path)?;
+        Ok(the_lib)
+    }
+
+    pub fn import_xml(
+        &mut self,
+        path: &Path,
+    ) -> Result<(), crate::xml_reader::err::LibraryXmlReader> {
+        let mut reader = LibraryXmlReader::new(path).unwrap();
+        // skip until library dictionary
+        loop {
+            if let Ok(xml::reader::XmlEvent::StartElement { name, .. }) = reader.forward() {
+                if name.local_name == "dict" {
+                    break;
+                }
             }
         }
-    }
-    reader.eat_start("dict")?;
-    loop {
-        match reader.peek() {
-            xml::reader::XmlEvent::StartElement { name, .. } => {
-                if name.local_name == "key" {
-                    let key = reader.element_as_string(Some("key")).unwrap();
-                    match key.as_str() {
-                        "Tracks" => the_lib.import_tracks(&mut reader)?,
-                        "Playlists" => the_lib.import_playlists(&mut reader)?,
-                        _ => {
-                            print!("{key} : ");
-                            let value = reader.element_as_string(None).unwrap();
-                            println!("{value}");
+        reader.eat_start("dict")?;
+        loop {
+            match reader.peek() {
+                xml::reader::XmlEvent::StartElement { name, .. } => {
+                    if name.local_name == "key" {
+                        let key = reader.element_as_string(Some("key")).unwrap();
+                        match key.as_str() {
+                            "Tracks" => self.import_tracks(&mut reader)?,
+                            "Playlists" => self.import_playlists(&mut reader)?,
+                            _ => {
+                                print!("{key} : ");
+                                let value = reader.element_as_string(None).unwrap();
+                                println!("{value}");
+                            }
                         }
+                    } else {
+                        panic!(
+                            "{} :Unexpected xml start element {name}",
+                            xml::common::Position::position(&reader.parser)
+                        );
                     }
-                } else {
+                }
+                xml::reader::XmlEvent::EndElement { .. } => {
+                    reader.eat_end("dict")?;
+                    break;
+                }
+                _ => {
                     panic!(
-                        "{} :Unexpected xml start element {name}",
-                        xml::common::Position::position(&reader.parser)
+                        "{} : Unexpected xml event {:?}",
+                        xml::common::Position::position(&reader.parser),
+                        reader.peek()
                     );
                 }
             }
-            xml::reader::XmlEvent::EndElement { .. } => {
-                reader.eat_end("dict")?;
-                break;
-            }
-            _ => {
-                panic!(
-                    "{} : Unexpected xml event {:?}",
-                    xml::common::Position::position(&reader.parser),
-                    reader.peek()
-                );
-            }
         }
+        Ok(())
     }
-    Ok(the_lib)
 }

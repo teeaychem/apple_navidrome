@@ -1,51 +1,101 @@
-use std::path::Path;
+use apple_navidrome_lib::{
+    structs::Library,
+    xml_reader::{self},
+};
 
-use apple_navidrome_lib::xml_reader::{self, *};
+/*
+Notes on fields:
+
+- size is not consistent between navidrome and apple music
+- navidrome does not consistenly assign a track number if a number is not given (both 0 and 1 observed)
+- things break if ';' is in an artist, both for queries and apple music
+ */
 
 const PLAYLIST_DIR: &str = "./playlists";
 
 use rusqlite::{Connection, Result};
 
 fn main() -> Result<(), xml_reader::err::LibraryXmlReader> {
-    // let nd_db_path = "./navidrome.db";
-    // let db = Connection::open(nd_db_path).unwrap();
-    // println!("{}", db.is_autocommit());
-    // let mut stmt = db.prepare("SELECT title, album, artist, track_number FROM media_file").unwrap();
-    // let person_iter = stmt
-    //     .query_map([], |row| {
-    //         let title: String = row.get(0).unwrap();
-    //         let album: String = row.get(1).unwrap();
-    //         let artist: String = row.get(2).unwrap();
-    //         let track: usize = row.get(3).unwrap();
-    //         Ok(format!("{track} - {title}\n{artist}\n{album}"))
-    //     })
-    //     .unwrap();
-    // for person in person_iter {
-    //     println!("{}", person.unwrap());
-    // }
-
-    let library = build_library(Path::new("Library.xml")).unwrap();
-
-    let list_as_json = serde_json::to_string(&library).unwrap();
-
-    let mut file = std::fs::File::create("Library.json").expect("Could not create file!");
-
-    std::io::Write::write_all(&mut file, list_as_json.as_bytes())
-        .expect("Cannot write to the file!");
-
+    let library = Library::from_xml(std::path::Path::new("Library.xml")).unwrap();
+    // let library = Library::from_json(std::path::Path::new("Library.json")).unwrap();
     println!("Read {} tracks", library.tracks.keys().count());
     println!("Read {} playlists", library.playlists.len());
-    let skip_lists = Vec::from(["Library", "Downloaded", "Music"]);
+    let mut not_found = vec![];
 
-    let playlist_dir_path = std::path::Path::new(PLAYLIST_DIR);
-    std::fs::create_dir(playlist_dir_path);
-    for playlist in &library.playlists {
-        if skip_lists.iter().any(|l| *l == playlist.name) || playlist.folder {
-            continue;
+    let nd_db_path = "./navidrome.db";
+    let db = Connection::open(nd_db_path).unwrap();
+    println!("{}", db.is_autocommit());
+
+    for track in library.tracks.values() {
+        let artist = match &track.artist {
+            None => "[Unknown Artist]",
+            Some(artist) => artist,
+        };
+        let title = match &track.title {
+            None => "",
+            Some(title) => title,
+        };
+        let album = match &track.album_title {
+            None => "",
+            Some(album) => album,
+        };
+
+        let mut query_string: String =
+            "SELECT title, album, artist, track_number, size FROM media_file WHERE ".to_string();
+        let constraints = [
+            "title LIKE :title",
+            "album = :album",
+            "artist = :artist",
+            // "track_number = :track_number",
+        ];
+        query_string.push_str(&constraints.join(" AND "));
+
+        let mut stmt = db.prepare(&query_string).unwrap();
+        let rows = stmt
+            .query_map(
+                &[
+                    (":title", format!("%{title}%").as_str()),
+                    (":album", album),
+                    (":artist", artist),
+                    // (
+                    //     ":track_number",
+                    //     &track.track_number.unwrap_or(1).to_string(),
+                    // ),
+                ],
+                |row| {
+                    let x: String = row.get(0).unwrap();
+                    Ok(x)
+                },
+            )
+            .unwrap();
+
+        let mut found = false;
+        for row in rows {
+            found = true;
+            // println!("{}", row.unwrap());
         }
-        println!("Creating {}", playlist.name);
-        playlist.export_m3u8(playlist_dir_path, &library.tracks);
+        if !found {
+            not_found.push(track);
+        }
     }
+
+    for nf in &not_found {
+        dbg!(nf);
+    }
+
+    // println!("Read {} tracks", library.tracks.keys().count());
+    // println!("Read {} playlists", library.playlists.len());
+    // let skip_lists = Vec::from(["Library", "Downloaded", "Music"]);
+
+    // let playlist_dir_path = std::path::Path::new(PLAYLIST_DIR);
+    // std::fs::create_dir(playlist_dir_path);
+    // for playlist in &library.playlists {
+    //     if skip_lists.iter().any(|l| *l == playlist.name) || playlist.folder {
+    //         continue;
+    //     }
+    //     println!("Creating {}", playlist.name);
+    //     playlist.export_m3u(playlist_dir_path, &library.tracks);
+    // }
 
     Ok(())
 }

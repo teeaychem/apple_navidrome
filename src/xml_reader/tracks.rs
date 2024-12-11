@@ -37,21 +37,16 @@ pub fn get_track(reader: &mut xml_reader::LibraryXmlReader) -> Result<Track, Tra
                     // skipped keys
                     "Album Rating Computed" => {}
                     "Artwork Count" => {}
-                    "BPM" => {}
                     "Bit Rate" => {}
-                    "Comments" => {}
                     "Disabled" => {}
                     "File Folder Count" => {}
                     "Kind" => {}
                     "Library Folder Count" => {}
-                    "Movement Count" => {}
-                    "Movement Name" => {}
                     "Normalization" => {}
                     "Part Of Gapless Album" => {}
-                    "Play Date" => {} // use utc
+                    "Play Date" => {} // use utc variant
                     "Rating Computed" => {}
                     "Sample Rate" => {}
-                    "Size" => {}
                     "Sort Album Artist" => {}
                     "Sort Album" => {}
                     "Sort Artist" => {}
@@ -61,49 +56,50 @@ pub fn get_track(reader: &mut xml_reader::LibraryXmlReader) -> Result<Track, Tra
                     "Volume Adjustment" => {}
 
                     // stored keys
-                    "Album Rating" => the_track.album_rating = value.parse::<usize>()?,
-                    "Release Date" => the_track.release_data = value.parse::<DateTime<Utc>>()?,
+                    "Movement Count" => {}
+                    "Movement Name" => the_track.movement_title = Some(value),
+                    "Comments" => the_track.comments = Some(value),
+                    "BPM" => the_track.bpm = Some(value.parse::<usize>()?),
+                    "Album Rating" => the_track.album_rating = Some(value.parse::<usize>()?),
+                    "Release Date" => {
+                        the_track.release_data = Some(value.parse::<DateTime<Utc>>()?)
+                    }
                     "Track ID" => the_track.id = value.parse::<TrackID>()?,
-                    "Album Artist" => the_track.album_artist = value,
-                    "Album" => the_track.album_title = value,
-                    "Artist" => the_track.artist = value,
+                    "Album Artist" => the_track.album_artist = Some(value),
+                    "Album" => the_track.album_title = Some(value),
+                    "Artist" => the_track.artist = Some(value),
                     "Compilation" => the_track.compiltion = true,
-                    "Composer" => the_track.composer = value,
+                    "Composer" => the_track.composer = Some(value),
                     "Date Added" => the_track.date_added = value.parse::<DateTime<Utc>>()?,
                     "Date Modified" => the_track.date_modified = value.parse::<DateTime<Utc>>()?,
-                    "Disc Count" => the_track.disc_count = value.parse::<usize>()?,
-                    "Disc Number" => the_track.disc_number = value.parse::<usize>()?,
-                    "Genre" => the_track.genre = value,
+                    "Disc Count" => the_track.disc_count = Some(value.parse::<usize>()?),
+                    "Disc Number" => the_track.disc_number = Some(value.parse::<usize>()?),
+                    "Genre" => the_track.genre = Some(value),
                     "Grouping" => the_track.grouping = Some(value),
-                    "Location" => {
-                        the_track.location = match urlencoding::decode(&value) {
-                            Err(_) => {
-                                let title = &the_track.title;
-                                println!("Warning: Location of \"{title}\" appears corrupt.\nThe raw value is:\n{value}");
-                                "".to_owned()
-                            }
-                            Ok(ok) => ok.to_string(),
-                        }
-                    }
+                    "Location" => the_track.location = value,
                     "Movement Number" => the_track.movement_number = Some(value.parse::<usize>()?),
-                    "Name" => the_track.title = value,
+                    "Name" => the_track.title = Some(value),
                     "Persistent ID" => the_track.persistent_id = value,
                     "Play Count" => the_track.play_count = value.parse::<usize>()?,
                     "Play Date UTC" => the_track.play_date = Some(value.parse::<DateTime<Utc>>()?),
                     "Rating" => the_track.rating = value.parse::<usize>()?,
+                    "Size" => the_track.size = value.parse::<usize>()?,
                     "Skip Count" => the_track.skip_count = value.parse::<usize>()?,
                     "Skip Date" => the_track.skip_date = Some(value.parse::<DateTime<Utc>>()?),
                     "Total Time" => {
                         the_track.duration = Duration::from_millis(value.parse::<u64>()?)
                     }
-                    "Track Count" => the_track.total_tracks = value.parse::<usize>()?,
-                    "Track Number" => the_track.track_number = value.parse::<usize>()?,
+                    "Track Count" => the_track.total_tracks = Some(value.parse::<usize>()?),
+                    "Track Number" => the_track.track_number = Some(value.parse::<usize>()?),
                     "Work" => the_track.work = Some(value),
-                    "Year" => the_track.year = value.parse::<usize>()?,
-
+                    "Year" => the_track.year = Some(value.parse::<usize>()?),
+                    // missed something?
                     _ => {
-                        let title = &the_track.title;
-                        let artist = &the_track.artist;
+                        let title = the_track.title.clone().unwrap_or("[No title]".to_string());
+                        let artist = the_track
+                            .artist
+                            .clone()
+                            .unwrap_or("[No artist]".to_string());
                         println!("Unexpected key:\n\t\"{key}\" with value\n\t\"{value}\"\nwhen reading{title} by{artist}.");
                     }
                 }
