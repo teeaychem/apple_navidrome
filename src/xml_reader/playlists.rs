@@ -4,59 +4,12 @@ use std::path::Path;
 use xml::common::Position;
 use xml::reader::XmlEvent;
 
-use crate::{structs::{TrackID, TrackMap}, xml_reader::{self}};
+use crate::{
+    structs::{playlist::Playlist, TrackID, TrackMap},
+    xml_reader::{self},
+};
 
 use super::*;
-
-#[derive(Default, Debug)]
-pub struct Playlist {
-    pub name: String,
-    pub description: String,
-    pub persistent_id: String,
-    pub parent_persistent_id: String,
-    pub folder: bool,
-    pub track_ids: Vec<TrackID>,
-}
-
-impl Playlist {
-    pub fn export_m3u8(
-        &self,
-        path: &Path,
-        tracks: &TrackMap,
-    ) -> Result<(), xml_reader::err::LibraryXmlReader> {
-        let playlist_filename = format!("{}.m3u8", self.name);
-        let playlist_path = path.join(Path::new(&playlist_filename));
-        match File::create(playlist_path.clone()) {
-            Ok(mut file) => {
-                writeln!(file, "#EXTM3U")?;
-                writeln!(file, "#EXTENC:UTF-8")?;
-                writeln!(file, "#PLAYLIST:{}", self.name)?;
-                for id in &self.track_ids {
-                    let track = match tracks.get(id) {
-                        Some(t) => t,
-                        None => {
-                            return Err(xml_reader::err::LibraryXmlReader::MissingTrack {
-                                playlist: self.name.to_owned(),
-                                track_id: *id,
-                            })
-                        }
-                    };
-
-                    writeln!(file, "#EXTINF:{},{} - {}",
-                        track.duration.as_secs(),
-                        track.artist,
-                        track.title)?;
-                    let abs_pth = &track.location;
-                    writeln!(file, "{}", abs_pth)?;
-                }
-            }
-            Err(_) => {
-                println!("Failed to create a file for playlist {}", self.name);
-            }
-        }
-        Ok(())
-    }
-}
 
 pub fn get_playlist(
     reader: &mut LibraryXmlReader,
@@ -108,39 +61,6 @@ pub fn get_playlist(
     Ok(the_playlist)
 }
 
-pub fn get_playlists(
-    reader: &mut LibraryXmlReader,
-) -> Result<Vec<Playlist>, xml_reader::err::LibraryXmlReader> {
-    let mut the_lists = Vec::default();
-    reader.eat_start("array")?;
-    // process each track
-    loop {
-        match reader.peek() {
-            XmlEvent::StartElement { name, .. } => {
-                //
-                match name.local_name.as_str() {
-                    "dict" => {
-                        the_lists.push(get_playlist(reader)?);
-                    }
-                    _ => panic!("Failed to process track {}", reader.parser.position()),
-                }
-            }
-            XmlEvent::EndElement { .. } => {
-                //
-                reader.eat_end("array")?;
-                break;
-            }
-
-            XmlEvent::Characters(chars) => {
-                panic!("Found chars {chars}");
-            }
-
-            _ => {}
-        }
-    }
-    Ok(the_lists)
-}
-
 pub fn playlist_ids(
     reader: &mut LibraryXmlReader,
 ) -> Result<Vec<usize>, xml_reader::err::LibraryXmlReader> {
@@ -169,4 +89,39 @@ pub fn playlist_ids(
         }
     }
     Ok(ids)
+}
+
+impl Library {
+    pub fn import_playlists(
+        &mut self,
+        reader: &mut LibraryXmlReader,
+    ) -> Result<(), xml_reader::err::LibraryXmlReader> {
+        reader.eat_start("array")?;
+        // process each track
+        loop {
+            match reader.peek() {
+                XmlEvent::StartElement { name, .. } => {
+                    //
+                    match name.local_name.as_str() {
+                        "dict" => {
+                            self.playlists.push(get_playlist(reader)?);
+                        }
+                        _ => panic!("Failed to process track {}", reader.parser.position()),
+                    }
+                }
+                XmlEvent::EndElement { .. } => {
+                    //
+                    reader.eat_end("array")?;
+                    break;
+                }
+
+                XmlEvent::Characters(chars) => {
+                    panic!("Found chars {chars}");
+                }
+
+                _ => {}
+            }
+        }
+        Ok(())
+    }
 }

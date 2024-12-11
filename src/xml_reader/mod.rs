@@ -7,6 +7,7 @@ use xml::common::{Position, TextPosition};
 use xml::reader::{EventReader, ParserConfig2, XmlEvent};
 
 use crate::structs::track::TrackErr;
+use crate::structs::Library;
 
 pub mod playlists;
 pub mod tracks;
@@ -54,8 +55,6 @@ pub mod err {
             start: String,
             end: String,
         },
-        MultipleTrackLibraries,
-        MultiplePlaylistArrays,
         MissingTrack {
             playlist: String,
             track_id: TrackID,
@@ -222,4 +221,53 @@ impl LibraryXmlReader {
 
         Ok(as_string)
     }
+}
+
+pub fn build_library(path: &Path) -> Result<Library, crate::xml_reader::err::LibraryXmlReader> {
+    let mut the_lib = Library::default();
+    let mut reader = LibraryXmlReader::new(path).unwrap();
+    // skip until library dictionary
+    loop {
+        if let Ok(xml::reader::XmlEvent::StartElement { name, .. }) = reader.forward() {
+            if name.local_name == "dict" {
+                break;
+            }
+        }
+    }
+    reader.eat_start("dict")?;
+    loop {
+        match reader.peek() {
+            xml::reader::XmlEvent::StartElement { name, .. } => {
+                if name.local_name == "key" {
+                    let key = reader.element_as_string(Some("key")).unwrap();
+                    match key.as_str() {
+                        "Tracks" => the_lib.import_tracks(&mut reader)?,
+                        "Playlists" => the_lib.import_playlists(&mut reader)?,
+                        _ => {
+                            print!("{key} : ");
+                            let value = reader.element_as_string(None).unwrap();
+                            println!("{value}");
+                        }
+                    }
+                } else {
+                    panic!(
+                        "{} :Unexpected xml start element {name}",
+                        xml::common::Position::position(&reader.parser)
+                    );
+                }
+            }
+            xml::reader::XmlEvent::EndElement { .. } => {
+                reader.eat_end("dict")?;
+                break;
+            }
+            _ => {
+                panic!(
+                    "{} : Unexpected xml event {:?}",
+                    xml::common::Position::position(&reader.parser),
+                    reader.peek()
+                );
+            }
+        }
+    }
+    Ok(the_lib)
 }
