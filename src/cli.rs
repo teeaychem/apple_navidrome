@@ -41,10 +41,7 @@ fn main() -> Result<(), err::Cli> {
     println!("Read {} tracks", library.tracks.keys().count());
     println!("Read {} playlists", library.playlists.len());
     library.artist_album_playcounts();
-    dbg!(library.counts);
-
-
-    std::process::exit(1);
+    dbg!(&library.counts);
 
     let nd_db_path = "./navidrome.db";
     let db = Connection::open(nd_db_path)?;
@@ -84,6 +81,12 @@ fn main() -> Result<(), err::Cli> {
             }
         }
     }
+    match update_artist_counts(&library, &user_id, &db) {
+        Ok(_) => {}
+        Err(e) => {
+            println!("Error updating artist counts:\n{e:?}");
+        }
+    };
 
     // for nf in &not_found {
     //     dbg!(nf);
@@ -202,6 +205,20 @@ pub fn item_ids(
     Ok(item_ids)
 }
 
+pub fn artist_id(artist: &str, db: &Connection) -> Result<Option<String>, rusqlite::Error> {
+    let query_string = "SELECT id, name FROM artist WHERE name = :name";
+
+    let mut stmt = db.prepare(query_string)?;
+    let mut rows = stmt.query(&[(":name", artist)])?;
+    while let Some(row) = rows.next()? {
+        let id: Option<String> = row.get("id").unwrap();
+        if let Some(found) = id {
+            return Ok(Some(found));
+        }
+    }
+    Ok(None)
+}
+
 pub fn update_match(
     matcher: &TrackMatcher,
     user_id: &str,
@@ -245,6 +262,53 @@ VALUES
         }
         Ok(_) => Ok(()),
     }
+}
+
+pub fn update_artist_counts(
+    library: &Library,
+    user_id: &str,
+    db: &Connection,
+) -> Result<(), rusqlite::Error> {
+    'artist_loop: for (artist, counts) in &library.counts {
+        let artist_id = artist_id(artist.as_str(), db)?;
+        if artist_id.is_none() {
+            println!("v_v;;; {artist}");
+            continue 'artist_loop;
+        }
+        let artist_id = artist_id.unwrap();
+        let update_string = "
+INSERT OR REPLACE INTO
+annotation
+(user_id, item_id, item_type, play_count, play_date, rating, starred, starred_at)
+VALUES
+(
+:user_id,
+:item_id,
+:item_type,
+:play_count,
+:play_date,
+:rating,
+:starred,
+:starred_at
+)
+";
+        let params: [(&str, &dyn ToSql); 8] = [
+            (":user_id", &user_id),
+            (":item_id", &artist_id),
+            (":item_type", &"artist"),
+            (":play_count", &counts.count),
+            (":play_date", &None::<DateTime<Utc>>),
+            (":rating", &None::<usize>),
+            (":starred", &None::<bool>),
+            (":starred_at", &None::<DateTime<Utc>>),
+        ];
+
+        let mut stmt = db.prepare(update_string).expect("oh");
+        if let Err(e) = stmt.execute(&params) {
+            println!("Error executing update: {e:?}");
+        }
+    }
+    Ok(())
 }
 
 pub fn user_ids(user: &str, db: &Connection) -> Result<Vec<String>, rusqlite::Error> {
