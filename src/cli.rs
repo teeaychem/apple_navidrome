@@ -8,8 +8,6 @@ Notes on fields:
 - things break if ';' is in an artist, both for queries and apple music
  */
 
-const PLAYLIST_DIR: &str = "./playlists";
-
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, Result, ToSql};
 
@@ -81,7 +79,7 @@ fn main() -> Result<(), err::Cli> {
             }
         }
     }
-    match update_artist_counts(&library, &user_id, &db) {
+    match update_artist_album_counts(&library, &user_id, &db) {
         Ok(_) => {}
         Err(e) => {
             println!("Error updating artist counts:\n{e:?}");
@@ -219,12 +217,26 @@ pub fn artist_id(artist: &str, db: &Connection) -> Result<Option<String>, rusqli
     Ok(None)
 }
 
-pub fn update_match(
-    matcher: &TrackMatcher,
-    user_id: &str,
+pub fn album_id(
+    album: &str,
+    artist_id: &str,
     db: &Connection,
-) -> Result<(), rusqlite::Error> {
-    let update_string = "
+) -> Result<Option<String>, rusqlite::Error> {
+    let query_string =
+        "SELECT id, name, artist_id FROM album WHERE name = :name AND artist_id = :artist_id";
+
+    let mut stmt = db.prepare(query_string)?;
+    let mut rows = stmt.query(&[(":name", album), (":artist_id", artist_id)])?;
+    while let Some(row) = rows.next()? {
+        let id: Option<String> = row.get("id").unwrap();
+        if let Some(found) = id {
+            return Ok(Some(found));
+        }
+    }
+    Ok(None)
+}
+
+const UPDATE_SCHEMA: &str = "
 INSERT OR REPLACE INTO
 annotation
 (user_id, item_id, item_type, play_count, play_date, rating, starred, starred_at)
@@ -240,6 +252,12 @@ VALUES
 :starred_at
 )
 ";
+
+pub fn update_match(
+    matcher: &TrackMatcher,
+    user_id: &str,
+    db: &Connection,
+) -> Result<(), rusqlite::Error> {
     let params: [(&str, &dyn ToSql); 8] = [
         (":user_id", &user_id),
         (":item_id", &matcher.item_id),
@@ -254,7 +272,7 @@ VALUES
         (":starred_at", &None::<DateTime<Utc>>),
     ];
 
-    let mut stmt = db.prepare(update_string).expect("oh");
+    let mut stmt = db.prepare(UPDATE_SCHEMA).expect("oh");
     match stmt.execute(&params) {
         Err(e) => {
             println!("Error executing update: {e:?}");
@@ -264,7 +282,7 @@ VALUES
     }
 }
 
-pub fn update_artist_counts(
+pub fn update_artist_album_counts(
     library: &Library,
     user_id: &str,
     db: &Connection,
@@ -276,22 +294,6 @@ pub fn update_artist_counts(
             continue 'artist_loop;
         }
         let artist_id = artist_id.unwrap();
-        let update_string = "
-INSERT OR REPLACE INTO
-annotation
-(user_id, item_id, item_type, play_count, play_date, rating, starred, starred_at)
-VALUES
-(
-:user_id,
-:item_id,
-:item_type,
-:play_count,
-:play_date,
-:rating,
-:starred,
-:starred_at
-)
-";
         let params: [(&str, &dyn ToSql); 8] = [
             (":user_id", &user_id),
             (":item_id", &artist_id),
@@ -303,9 +305,30 @@ VALUES
             (":starred_at", &None::<DateTime<Utc>>),
         ];
 
-        let mut stmt = db.prepare(update_string).expect("oh");
-        if let Err(e) = stmt.execute(&params) {
-            println!("Error executing update: {e:?}");
+        let mut stmt = db.prepare(UPDATE_SCHEMA).expect("oh");
+        stmt.execute(&params)?;
+
+        'album_loop: for (album, count) in &counts.albums {
+            let album_id = album_id(album, &artist_id, db)?;
+            if album_id.is_none() {
+                println!(";;;v_v {album}");
+                continue 'album_loop;
+            }
+            let album_id = album_id.unwrap();
+            let params: [(&str, &dyn ToSql); 8] = [
+                (":user_id", &user_id),
+                (":item_id", &album_id),
+                (":item_type", &"album"),
+                (":play_count", &count),
+                (":play_date", &None::<DateTime<Utc>>),
+                (":rating", &None::<usize>),
+                (":starred", &None::<bool>),
+                (":starred_at", &None::<DateTime<Utc>>),
+            ];
+            let mut stmt = db.prepare(UPDATE_SCHEMA).expect("oh");
+            if let Err(e) = stmt.execute(&params) {
+                println!("Error executing update: {e:?}");
+            }
         }
     }
     Ok(())
