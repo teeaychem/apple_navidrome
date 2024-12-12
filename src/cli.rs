@@ -1,4 +1,7 @@
-use apple_navidrome_lib::structs::{track::Track, Library};
+use apple_navidrome_lib::{
+    navidrome_writer::{NavidromeWriter, TrackMatcher},
+    structs::Library,
+};
 
 /*
 Notes on fields:
@@ -7,9 +10,6 @@ Notes on fields:
 - navidrome does not consistenly assign a track number if a number is not given (both 0 and 1 observed)
 - things break if ';' is in an artist, both for queries and apple music
  */
-
-use chrono::{DateTime, Utc};
-use rusqlite::{Connection, Result, ToSql};
 
 pub mod err {
     use apple_navidrome_lib::xml_reader;
@@ -34,55 +34,94 @@ pub mod err {
 }
 
 fn main() -> Result<(), err::Cli> {
+    let mut clog = colog::default_builder();
+    clog.filter_level(log::LevelFilter::Warn);
+    clog.init();
+
     let mut library = Library::from_xml(std::path::Path::new("Library.xml"))?;
     // let library = Library::from_json(std::path::Path::new("Library.json")).unwrap();
-    println!("Read {} tracks", library.tracks.keys().count());
-    println!("Read {} playlists", library.playlists.len());
+    log::info!("Read {} tracks", library.tracks.keys().count());
+    log::info!("Read {} playlists", library.playlists.len());
     library.artist_album_playcounts();
-    dbg!(&library.counts);
 
     let nd_db_path = "./navidrome.db";
-    let db = Connection::open(nd_db_path)?;
-
-    let user = "user";
+    let backup = format!("{nd_db_path}.backup.db");
+    match std::fs::copy(nd_db_path, &backup) {
+        Err(_) => {
+            log::error!(
+                "Failed to create a copy of the navidrome database, no further action taken"
+            );
+            std::process::exit(1)
+        }
+        Ok(_) => {
+            log::info!("A copy of the navidrome database has made.");
+        }
+    };
+    let writer = NavidromeWriter::from(std::path::Path::new(&backup))?;
     let user_id = {
-        let ids = user_ids(user, &db)?;
+        let user = "user";
+        let ids = writer.user_ids(user)?;
         match &ids.len() {
-            0 => panic!("No user \"{user}\" found."),
-            1 => ids.first().unwrap().to_owned(),
+            0 => {
+                log::error!("No user \"{user}\" found.");
+                std::process::exit(1);
+            }
+            1 => {
+                let unique = ids.first().unwrap().to_owned();
+                log::info!("User \"{user}\" found with id: {unique}");
+                unique
+            }
             _ => {
-                dbg!(ids);
-                panic!("Multiple ids found for user \"{user}\"")
+                log::error!("Multiple ids found for user \"{user}\".");
+                std::process::exit(1);
             }
         }
     };
-    println!("User id is: {user_id}");
 
+    let mut failed_matches = vec![];
+    let mut multiple_matches = vec![];
     for track in library.tracks.values() {
         let mut matcher = TrackMatcher::from_track(track);
-        let ids = item_ids(&mut matcher, &db)?;
+        let ids = writer.item_ids(&mut matcher)?;
         match ids.len() {
-            0 => {
-                println!("Failed to match track");
-                dbg!(track);
-                dbg!(matcher.selections);
-                // missing track
-            }
+            0 => failed_matches.push(track), // missing track
             1 => {
                 // unique track
-                println!("{:?} -> {}", &track.title, ids.first().unwrap());
-                update_match(&matcher, &user_id, &db);
+                writer.update_match(&matcher, &user_id);
                 // update_match(&matcher, &db)?;
             }
-            _ => {
-                // multiple tracks
-            }
+            _ => multiple_matches.push(track), // multiple tracks
         }
     }
-    match update_artist_album_counts(&library, &user_id, &db) {
+    if !failed_matches.is_empty() {
+        let mismatch_path = "failed_matches.json";
+        let mut mismatch_file = std::fs::File::create(mismatch_path).unwrap();
+        let _ = std::io::Write::write_all(
+            &mut mismatch_file,
+            serde_json::to_string_pretty(&failed_matches)
+                .unwrap()
+                .as_bytes(),
+        );
+        log::warn!("Some tracks from Apple Music could not be matched to a track in the navidrome database.
+A JSON file containing these tracks has been written to {mismatch_path}.");
+    }
+    if !multiple_matches.is_empty() {
+        let mismatch_path = "multiple_matches.json";
+        let mut mismatch_file = std::fs::File::create(mismatch_path).unwrap();
+        let _ = std::io::Write::write_all(
+            &mut mismatch_file,
+            serde_json::to_string_pretty(&multiple_matches)
+                .unwrap()
+                .as_bytes(),
+        );
+        log::warn!("Some tracks from Apple Music were matched to multiple tracks in the navidrome database.
+A JSON file containing these tracks has been written to {mismatch_path}.");
+    }
+
+    match writer.update_artist_album_counts(&library, &user_id) {
         Ok(_) => {}
         Err(e) => {
-            println!("Error updating artist counts:\n{e:?}");
+            log::error!("Error updating artist counts:\n{e:?}");
         }
     };
 
@@ -105,246 +144,4 @@ fn main() -> Result<(), err::Cli> {
     // }
 
     Ok(())
-}
-
-pub struct TrackMatcher<'t> {
-    track: &'t Track,
-    selections: Vec<&'t str>,
-    binds: Vec<&'t str>,
-    parameters: Vec<(&'t str, &'t dyn ToSql)>,
-    item_id: Option<String>,
-}
-
-impl<'t> TrackMatcher<'t> {
-    fn from_track(track: &'t Track) -> Self {
-        let mut identifier = TrackMatcher {
-            track,
-            selections: vec![],
-            binds: vec![],
-            parameters: vec![],
-            item_id: None,
-        };
-
-        if let Some(artist) = &track.artist {
-            identifier.selections.push("artist");
-            identifier.parameters.push((":artist", artist));
-            identifier.binds.push("artist = :artist");
-        }
-
-        if let Some(album) = &track.album_title {
-            identifier.selections.push("album");
-            identifier.parameters.push((":album", album));
-            identifier.binds.push("album = :album");
-        }
-
-        // to ensure the formatted string lives suffiently long, if used
-        // the like is used as (at least sometimes) without a track apple music uses the filename while navidrome uses a path
-        // as the filename is included in the path, things work out
-        let track_hack = Box::leak(Box::new(format!(
-            "%{}",
-            &track.title.clone().unwrap_or("".to_string())
-        )));
-        if let Some(_use_hack) = &track.title {
-            identifier.selections.push("title");
-            identifier.parameters.push((":title", track_hack));
-            identifier.binds.push("title LIKE :title");
-        }
-
-        if let Some(track_number) = &track.track_number {
-            identifier.selections.push("track_number");
-            identifier.parameters.push((":track_number", track_number));
-            identifier.binds.push("track_number = :track_number");
-        }
-
-        if let Some(disc_number) = &track.disc_number {
-            identifier.selections.push("disc_number");
-            identifier.parameters.push((":disc_number", disc_number));
-            identifier.binds.push("disc_number = :disc_number");
-        }
-
-        identifier
-    }
-
-    pub fn selects(&self) -> String {
-        self.selections.join(", ")
-    }
-
-    pub fn binds(&self) -> String {
-        self.binds.join(" AND ")
-    }
-
-    pub fn parameters(&self) -> &[(&'t str, &'t dyn ToSql)] {
-        self.parameters.as_slice()
-    }
-}
-
-pub fn item_ids(
-    matcher: &mut TrackMatcher,
-    db: &Connection,
-) -> Result<Vec<String>, rusqlite::Error> {
-    let mut item_ids: Vec<String> = vec![];
-
-    let query_string = format!(
-        "SELECT id, {} FROM media_file WHERE {}",
-        matcher.selects(),
-        matcher.binds()
-    );
-
-    let mut stmt = db.prepare(&query_string)?;
-    let mut rows = stmt.query(matcher.parameters())?;
-    while let Some(row) = rows.next()? {
-        let id: Option<String> = row.get("id").unwrap();
-        if let Some(found) = id {
-            item_ids.push(found.clone());
-            matcher.item_id = Some(found);
-        }
-    }
-
-    Ok(item_ids)
-}
-
-pub fn artist_id(artist: &str, db: &Connection) -> Result<Option<String>, rusqlite::Error> {
-    let query_string = "SELECT id, name FROM artist WHERE name = :name";
-
-    let mut stmt = db.prepare(query_string)?;
-    let mut rows = stmt.query(&[(":name", artist)])?;
-    while let Some(row) = rows.next()? {
-        let id: Option<String> = row.get("id").unwrap();
-        if let Some(found) = id {
-            return Ok(Some(found));
-        }
-    }
-    Ok(None)
-}
-
-pub fn album_id(
-    album: &str,
-    artist_id: &str,
-    db: &Connection,
-) -> Result<Option<String>, rusqlite::Error> {
-    let query_string =
-        "SELECT id, name, artist_id FROM album WHERE name = :name AND artist_id = :artist_id";
-
-    let mut stmt = db.prepare(query_string)?;
-    let mut rows = stmt.query(&[(":name", album), (":artist_id", artist_id)])?;
-    while let Some(row) = rows.next()? {
-        let id: Option<String> = row.get("id").unwrap();
-        if let Some(found) = id {
-            return Ok(Some(found));
-        }
-    }
-    Ok(None)
-}
-
-const UPDATE_SCHEMA: &str = "
-INSERT OR REPLACE INTO
-annotation
-(user_id, item_id, item_type, play_count, play_date, rating, starred, starred_at)
-VALUES
-(
-:user_id,
-:item_id,
-:item_type,
-:play_count,
-:play_date,
-:rating,
-:starred,
-:starred_at
-)
-";
-
-pub fn update_match(
-    matcher: &TrackMatcher,
-    user_id: &str,
-    db: &Connection,
-) -> Result<(), rusqlite::Error> {
-    let params: [(&str, &dyn ToSql); 8] = [
-        (":user_id", &user_id),
-        (":item_id", &matcher.item_id),
-        (":item_type", &"media_file"),
-        (":play_count", &matcher.track.play_count),
-        (":play_date", &matcher.track.play_date),
-        (":rating", &matcher.track.rating),
-        (
-            ":starred",
-            &(matcher.track.loved || matcher.track.favourited),
-        ),
-        (":starred_at", &None::<DateTime<Utc>>),
-    ];
-
-    let mut stmt = db.prepare(UPDATE_SCHEMA).expect("oh");
-    match stmt.execute(&params) {
-        Err(e) => {
-            println!("Error executing update: {e:?}");
-            Ok(())
-        }
-        Ok(_) => Ok(()),
-    }
-}
-
-pub fn update_artist_album_counts(
-    library: &Library,
-    user_id: &str,
-    db: &Connection,
-) -> Result<(), rusqlite::Error> {
-    'artist_loop: for (artist, counts) in &library.counts {
-        let artist_id = artist_id(artist.as_str(), db)?;
-        if artist_id.is_none() {
-            println!("v_v;;; {artist}");
-            continue 'artist_loop;
-        }
-        let artist_id = artist_id.unwrap();
-        let params: [(&str, &dyn ToSql); 8] = [
-            (":user_id", &user_id),
-            (":item_id", &artist_id),
-            (":item_type", &"artist"),
-            (":play_count", &counts.count),
-            (":play_date", &None::<DateTime<Utc>>),
-            (":rating", &None::<usize>),
-            (":starred", &None::<bool>),
-            (":starred_at", &None::<DateTime<Utc>>),
-        ];
-
-        let mut stmt = db.prepare(UPDATE_SCHEMA).expect("oh");
-        stmt.execute(&params)?;
-
-        'album_loop: for (album, count) in &counts.albums {
-            let album_id = album_id(album, &artist_id, db)?;
-            if album_id.is_none() {
-                println!(";;;v_v {album}");
-                continue 'album_loop;
-            }
-            let album_id = album_id.unwrap();
-            let params: [(&str, &dyn ToSql); 8] = [
-                (":user_id", &user_id),
-                (":item_id", &album_id),
-                (":item_type", &"album"),
-                (":play_count", &count),
-                (":play_date", &None::<DateTime<Utc>>),
-                (":rating", &None::<usize>),
-                (":starred", &None::<bool>),
-                (":starred_at", &None::<DateTime<Utc>>),
-            ];
-            let mut stmt = db.prepare(UPDATE_SCHEMA).expect("oh");
-            if let Err(e) = stmt.execute(&params) {
-                println!("Error executing update: {e:?}");
-            }
-        }
-    }
-    Ok(())
-}
-
-pub fn user_ids(user: &str, db: &Connection) -> Result<Vec<String>, rusqlite::Error> {
-    let mut ids = vec![];
-
-    let query_string = format!("SELECT id, user_name FROM user WHERE user_name = '{user}'");
-    let mut stmt = db.prepare(&query_string)?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        dbg!(row);
-        let id = row.get("id").unwrap();
-        ids.push(id);
-    }
-
-    Ok(ids)
 }
