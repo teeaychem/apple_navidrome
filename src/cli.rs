@@ -13,7 +13,7 @@ Notes on fields:
 
 const PLAYLIST_DIR: &str = "./playlists";
 
-use rusqlite::{Connection, Result};
+use rusqlite::{Connection, Result, ToSql};
 
 fn main() -> Result<(), xml_reader::err::LibraryXmlReader> {
     let library = Library::from_xml(std::path::Path::new("Library.xml")).unwrap();
@@ -27,52 +27,61 @@ fn main() -> Result<(), xml_reader::err::LibraryXmlReader> {
     println!("{}", db.is_autocommit());
 
     for track in library.tracks.values() {
-        let artist = match &track.artist {
-            None => "[Unknown Artist]",
-            Some(artist) => artist,
-        };
-        let title = match &track.title {
-            None => "",
-            Some(title) => title,
-        };
-        let album = match &track.album_title {
-            None => "",
-            Some(album) => album,
-        };
+        let mut query_prep: Vec<(&str, &dyn ToSql)> = vec![];
+        let mut query_where = vec![];
 
-        let mut query_string: String =
-            "SELECT title, album, artist, track_number, size FROM media_file WHERE ".to_string();
-        let constraints = [
-            "title LIKE :title",
-            "album = :album",
-            "artist = :artist",
-            // "track_number = :track_number",
-        ];
-        query_string.push_str(&constraints.join(" AND "));
+        if let Some(artist) = &track.artist {
+            query_prep.push((":artist", artist));
+            query_where.push("artist = :artist");
+        }
+        // to ensure the formatted string lives suffiently long, if used
+        // the like is used as (at least sometimes) without a track apple music uses the filename while navidrome uses a path
+        // as the filename is included in the path, things work out
+        let like_hack = format!("%{}", &track.title.clone().unwrap_or("".to_string()));
+        if let Some(_use_hack) = &track.title {
+            query_prep.push((":title", &like_hack));
+            query_where.push("title LIKE :title");
+        }
 
-        let mut stmt = db.prepare(&query_string).unwrap();
+        if let Some(album) = &track.album_title {
+            query_prep.push((":album", album));
+            query_where.push("album = :album");
+        }
+
+        if let Some(track_number) = &track.track_number {
+            query_prep.push((":track_number", track_number));
+            query_where.push("track_number = :track_number");
+        }
+
+        if let Some(disc_number) = &track.disc_number {
+            query_prep.push((":disc_number", disc_number));
+            query_where.push("disc_number = :disc_number");
+        }
+
+        let query_string = format!(
+            "SELECT title, album, artist, track_number, disc_number FROM media_file WHERE {}",
+            query_where.join(" AND ")
+        );
+
+        let mut stmt = db.prepare(&query_string).expect("questr");
         let rows = stmt
-            .query_map(
-                &[
-                    (":title", format!("%{title}%").as_str()),
-                    (":album", album),
-                    (":artist", artist),
-                    // (
-                    //     ":track_number",
-                    //     &track.track_number.unwrap_or(1).to_string(),
-                    // ),
-                ],
-                |row| {
-                    let x: String = row.get(0).unwrap();
-                    Ok(x)
-                },
-            )
+            .query_map(query_prep.as_slice(), |row| {
+                let x: String = row.get(0).unwrap();
+                Ok(x)
+            })
             .unwrap();
 
+        let mut row_details = vec![];
         let mut found = false;
         for row in rows {
             found = true;
+            row_details.push(row.unwrap());
             // println!("{}", row.unwrap());
+        }
+        if row_details.len() > 1 {
+            dbg!(&query_prep.iter().map(|(a, _)| a).collect::<Vec<_>>());
+            dbg!(row_details);
+            panic!("long");
         }
         if !found {
             not_found.push(track);
