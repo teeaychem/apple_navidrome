@@ -9,11 +9,42 @@ pub mod track;
 
 pub type TrackID = usize;
 pub type TrackMap = std::collections::HashMap<TrackID, Track>;
+type Artist = String;
+type Album = String;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Library {
     pub tracks: HashMap<TrackID, Track>,
     pub playlists: Vec<Playlist>,
+    pub counts: HashMap<Artist, ArtistCount>
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct ArtistCount {
+    count: usize,
+    albums: HashMap<Album, usize>,
+}
+
+impl Library {
+    pub fn artist_album_playcounts(&mut self) {
+        'track_loop: for track in self.tracks.values() {
+            let artist = match &track.artist {
+                Some(found) => found,
+                None => continue 'track_loop,
+            };
+            let artist_entry = self.counts
+                .entry(artist.to_owned())
+                .or_default();
+            artist_entry.count += track.play_count;
+            if let Some(album) = &track.album_title {
+                let ac = artist_entry
+                    .albums
+                    .entry(album.to_owned())
+                    .or_insert(track.play_count);
+                *artist_entry.albums.get_mut(album).unwrap() = std::cmp::min(track.play_count, *ac);
+            }
+        }
+    }
 }
 
 impl Library {

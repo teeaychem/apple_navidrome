@@ -36,10 +36,15 @@ pub mod err {
 }
 
 fn main() -> Result<(), err::Cli> {
-    let library = Library::from_xml(std::path::Path::new("Library.xml"))?;
+    let mut library = Library::from_xml(std::path::Path::new("Library.xml"))?;
     // let library = Library::from_json(std::path::Path::new("Library.json")).unwrap();
     println!("Read {} tracks", library.tracks.keys().count());
     println!("Read {} playlists", library.playlists.len());
+    library.artist_album_playcounts();
+    dbg!(library.counts);
+
+
+    std::process::exit(1);
 
     let nd_db_path = "./navidrome.db";
     let db = Connection::open(nd_db_path)?;
