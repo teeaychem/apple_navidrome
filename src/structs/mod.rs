@@ -1,3 +1,4 @@
+use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -14,6 +15,7 @@ type Album = String;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Library {
+    pub date: DateTime<chrono::Utc>,
     pub tracks: HashMap<TrackID, Track>,
     pub playlists: Vec<Playlist>,
     pub counts: HashMap<Artist, ArtistCount>

@@ -35,7 +35,7 @@ pub mod err {
 
 fn main() -> Result<(), err::Cli> {
     let mut clog = colog::default_builder();
-    clog.filter_level(log::LevelFilter::Warn);
+    clog.filter_level(log::LevelFilter::Debug);
     clog.init();
 
     let mut library = Library::from_xml(std::path::Path::new("Library.xml"))?;
