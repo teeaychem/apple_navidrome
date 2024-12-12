@@ -10,6 +10,7 @@ Notes on fields:
 
 const PLAYLIST_DIR: &str = "./playlists";
 
+use chrono::{DateTime, Utc};
 use rusqlite::{Connection, Result, ToSql};
 
 pub mod err {
@@ -42,18 +43,36 @@ fn main() -> Result<(), err::Cli> {
 
     let nd_db_path = "./navidrome.db";
     let db = Connection::open(nd_db_path)?;
-    println!("{}", db.is_autocommit());
+
+    let user = "user";
+    let user_id = {
+        let ids = user_ids(user, &db)?;
+        match &ids.len() {
+            0 => panic!("No user \"{user}\" found."),
+            1 => ids.first().unwrap().to_owned(),
+            _ => {
+                dbg!(ids);
+                panic!("Multiple ids found for user \"{user}\"")
+            }
+        }
+    };
+    println!("User id is: {user_id}");
 
     for track in library.tracks.values() {
-        let matcher = TrackMatcher::from_track(track);
-        match unique_match(&matcher, &db)? {
-            None => {
+        let mut matcher = TrackMatcher::from_track(track);
+        let ids = item_ids(&mut matcher, &db)?;
+        match ids.len() {
+            0 => {
+                println!("Failed to match track");
                 dbg!(track);
                 dbg!(matcher.selections);
                 // missing track
             }
-            Some(true) => {
+            1 => {
                 // unique track
+                println!("{:?} -> {}", &track.title, ids.first().unwrap());
+                update_match(&matcher, &user_id, &db);
+                // update_match(&matcher, &db)?;
             }
             _ => {
                 // multiple tracks
@@ -87,6 +106,7 @@ pub struct TrackMatcher<'t> {
     selections: Vec<&'t str>,
     binds: Vec<&'t str>,
     parameters: Vec<(&'t str, &'t dyn ToSql)>,
+    item_id: Option<String>,
 }
 
 impl<'t> TrackMatcher<'t> {
@@ -96,6 +116,7 @@ impl<'t> TrackMatcher<'t> {
             selections: vec![],
             binds: vec![],
             parameters: vec![],
+            item_id: None,
         };
 
         if let Some(artist) = &track.artist {
@@ -151,29 +172,87 @@ impl<'t> TrackMatcher<'t> {
     }
 }
 
-pub fn unique_match(
-    matcher: &TrackMatcher,
+pub fn item_ids(
+    matcher: &mut TrackMatcher,
     db: &Connection,
-) -> Result<Option<bool>, rusqlite::Error> {
-    let mut found = 0;
+) -> Result<Vec<String>, rusqlite::Error> {
+    let mut item_ids: Vec<String> = vec![];
 
     let query_string = format!(
-        "SELECT {} FROM media_file WHERE {}",
+        "SELECT id, {} FROM media_file WHERE {}",
         matcher.selects(),
         matcher.binds()
     );
 
     let mut stmt = db.prepare(&query_string)?;
     let mut rows = stmt.query(matcher.parameters())?;
-    while (rows.next()?).is_some() {
-        found += 1;
+    while let Some(row) = rows.next()? {
+        let id: Option<String> = row.get("id").unwrap();
+        if let Some(found) = id {
+            item_ids.push(found.clone());
+            matcher.item_id = Some(found);
+        }
     }
 
-    match found {
-        0 => Ok(None),
-        1 => Ok(Some(true)),
-        _ => Ok(Some(false)),
+    Ok(item_ids)
+}
+
+pub fn update_match(
+    matcher: &TrackMatcher,
+    user_id: &str,
+    db: &Connection,
+) -> Result<(), rusqlite::Error> {
+    let update_string = "
+INSERT OR REPLACE INTO
+annotation
+(user_id, item_id, item_type, play_count, play_date, rating, starred, starred_at)
+VALUES
+(
+:user_id,
+:item_id,
+:item_type,
+:play_count,
+:play_date,
+:rating,
+:starred,
+:starred_at
+)
+";
+    let params: [(&str, &dyn ToSql); 8] = [
+        (":user_id", &user_id),
+        (":item_id", &matcher.item_id),
+        (":item_type", &"media_file"),
+        (":play_count", &matcher.track.play_count),
+        (":play_date", &matcher.track.play_date),
+        (":rating", &matcher.track.rating),
+        (
+            ":starred",
+            &(matcher.track.loved || matcher.track.favourited),
+        ),
+        (":starred_at", &None::<DateTime<Utc>>),
+    ];
+
+    let mut stmt = db.prepare(update_string).expect("oh");
+    match stmt.execute(&params) {
+        Err(e) => {
+            println!("Error executing update: {e:?}");
+            Ok(())
+        }
+        Ok(_) => Ok(()),
     }
 }
 
-pub fn update_match(matcher: &TrackMatcher, db: &Connection) {}
+pub fn user_ids(user: &str, db: &Connection) -> Result<Vec<String>, rusqlite::Error> {
+    let mut ids = vec![];
+
+    let query_string = format!("SELECT id, user_name FROM user WHERE user_name = '{user}'");
+    let mut stmt = db.prepare(&query_string)?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        dbg!(row);
+        let id = row.get("id").unwrap();
+        ids.push(id);
+    }
+
+    Ok(ids)
+}
