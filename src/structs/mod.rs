@@ -21,8 +21,8 @@ pub struct Library {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ArtistCount {
-    count: usize,
-    albums: HashMap<Album, usize>,
+    pub count: usize,
+    pub albums: HashMap<Album, usize>,
 }
 
 impl Library {
