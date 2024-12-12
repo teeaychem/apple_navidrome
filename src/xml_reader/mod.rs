@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 
+use chrono::DateTime;
 use xml::common::{Position, TextPosition};
 
 use xml::reader::{EventReader, ParserConfig2, XmlEvent};
@@ -252,10 +253,17 @@ impl Library {
                         match key.as_str() {
                             "Tracks" => self.import_tracks(&mut reader)?,
                             "Playlists" => self.import_playlists(&mut reader)?,
-                            _ => {
-                                print!("{key} : ");
+                            "Date" => {
                                 let value = reader.element_as_string(None).unwrap();
-                                println!("{value}");
+                                if let Ok(date) = value.parse::<DateTime<chrono::Utc>>() {
+                                    self.date = date;
+                                }
+                            }
+                            _ => {
+                                let value = reader.element_as_string(None).unwrap();
+                                log::debug!(
+                                    "Ignored top level Apple Music key/value pair: {key} | {value}"
+                                );
                             }
                         }
                     } else {
