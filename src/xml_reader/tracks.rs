@@ -25,6 +25,7 @@ impl From<ParseIntError> for TrackErr {
     }
 }
 
+#[rustfmt::skip]
 pub fn get_track(reader: &mut xml_reader::LibraryXmlReader) -> Result<Track, TrackErr> {
     let _ = reader.forward();
     let mut the_track = Track::default();
@@ -34,65 +35,62 @@ pub fn get_track(reader: &mut xml_reader::LibraryXmlReader) -> Result<Track, Tra
                 let key = reader.element_as_string(Some("key")).unwrap();
                 let value = reader.element_as_string(None).unwrap();
                 match key.as_str() {
-                    // skipped keys
+
+                    "Album Artist" => the_track.album_artist = Some(value),
                     "Album Rating Computed" => {}
+                    "Album Rating" => the_track.album_rating = Some(value.parse::<usize>()?),
+                    "Album" => the_track.album_title = Some(value),
+                    "Artist" => the_track.artist = Some(value),
                     "Artwork Count" => {}
+                    "BPM" => the_track.bpm = Some(value.parse::<usize>()?),
                     "Bit Rate" => {}
+                    "Comments" => the_track.comments = Some(value),
+                    "Compilation" => the_track.compiltion = true,
+                    "Composer" => the_track.composer = Some(value),
+                    "Date Added" => the_track.date_added = value.parse::<DateTime<Utc>>()?,
+                    "Date Modified" => the_track.date_modified = value.parse::<DateTime<Utc>>()?,
                     "Disabled" => {}
+                    "Disc Count" => the_track.disc_count = Some(value.parse::<usize>()?),
+                    "Disc Number" => the_track.disc_number = Some(value.parse::<usize>()?),
+                    "Favorited" => the_track.favourited = true,
                     "File Folder Count" => {}
+                    "Genre" => the_track.genre = Some(value),
+                    "Grouping" => the_track.grouping = Some(value),
                     "Kind" => {}
                     "Library Folder Count" => {}
+                    "Location" => the_track.location = value,
+                    "Loved" => the_track.loved = true,
+                    "Movement Count" => {}
+                    "Movement Name" => the_track.movement_title = Some(value),
+                    "Movement Number" => the_track.movement_number = Some(value.parse::<usize>()?),
+                    "Name" => the_track.title = Some(value),
                     "Normalization" => {}
                     "Part Of Gapless Album" => {}
+                    "Persistent ID" => the_track.persistent_id = value,
+                    "Play Count" => the_track.play_count = value.parse::<usize>()?,
+                    "Play Date UTC" => the_track.play_date = Some(value.parse::<DateTime<Utc>>()?),
                     "Play Date" => {} // use utc variant
                     "Rating Computed" => {}
+                    "Rating" => the_track.rating = value.parse::<usize>()?,
+                    "Release Date" => the_track.release_data = Some(value.parse::<DateTime<Utc>>()?),
                     "Sample Rate" => {}
+                    "Size" => the_track.size = value.parse::<usize>()?,
+                    "Skip Count" => the_track.skip_count = value.parse::<usize>()?,
+                    "Skip Date" => the_track.skip_date = Some(value.parse::<DateTime<Utc>>()?),
                     "Sort Album Artist" => {}
                     "Sort Album" => {}
                     "Sort Artist" => {}
                     "Sort Composer" => {}
                     "Sort Name" => {}
+                    "Total Time" => the_track.duration = Duration::from_millis(value.parse::<u64>()?),
+                    "Track Count" => the_track.total_tracks = Some(value.parse::<usize>()?),
+                    "Track ID" => the_track.id = value.parse::<TrackID>()?,
+                    "Track Number" => the_track.track_number = Some(value.parse::<usize>()?),
                     "Track Type" => {}
                     "Volume Adjustment" => {}
-
-                    // stored keys
-                    "Movement Count" => {}
-                    "Movement Name" => the_track.movement_title = Some(value),
-                    "Comments" => the_track.comments = Some(value),
-                    "BPM" => the_track.bpm = Some(value.parse::<usize>()?),
-                    "Album Rating" => the_track.album_rating = Some(value.parse::<usize>()?),
-                    "Release Date" => {
-                        the_track.release_data = Some(value.parse::<DateTime<Utc>>()?)
-                    }
-                    "Track ID" => the_track.id = value.parse::<TrackID>()?,
-                    "Album Artist" => the_track.album_artist = Some(value),
-                    "Album" => the_track.album_title = Some(value),
-                    "Artist" => the_track.artist = Some(value),
-                    "Compilation" => the_track.compiltion = true,
-                    "Composer" => the_track.composer = Some(value),
-                    "Date Added" => the_track.date_added = value.parse::<DateTime<Utc>>()?,
-                    "Date Modified" => the_track.date_modified = value.parse::<DateTime<Utc>>()?,
-                    "Disc Count" => the_track.disc_count = Some(value.parse::<usize>()?),
-                    "Disc Number" => the_track.disc_number = Some(value.parse::<usize>()?),
-                    "Genre" => the_track.genre = Some(value),
-                    "Grouping" => the_track.grouping = Some(value),
-                    "Location" => the_track.location = value,
-                    "Movement Number" => the_track.movement_number = Some(value.parse::<usize>()?),
-                    "Name" => the_track.title = Some(value),
-                    "Persistent ID" => the_track.persistent_id = value,
-                    "Play Count" => the_track.play_count = value.parse::<usize>()?,
-                    "Play Date UTC" => the_track.play_date = Some(value.parse::<DateTime<Utc>>()?),
-                    "Rating" => the_track.rating = value.parse::<usize>()?,
-                    "Size" => the_track.size = value.parse::<usize>()?,
-                    "Skip Count" => the_track.skip_count = value.parse::<usize>()?,
-                    "Skip Date" => the_track.skip_date = Some(value.parse::<DateTime<Utc>>()?),
-                    "Total Time" => {
-                        the_track.duration = Duration::from_millis(value.parse::<u64>()?)
-                    }
-                    "Track Count" => the_track.total_tracks = Some(value.parse::<usize>()?),
-                    "Track Number" => the_track.track_number = Some(value.parse::<usize>()?),
                     "Work" => the_track.work = Some(value),
                     "Year" => the_track.year = Some(value.parse::<usize>()?),
+
                     // missed something?
                     _ => {
                         let title = the_track.title.clone().unwrap_or("[No title]".to_string());
