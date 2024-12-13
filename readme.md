@@ -61,4 +61,14 @@ As with most things there are some caveats.
 - The Navidrome import has only been tested on a single database (created by Navidrome version 0.53.3).
   As with the XML parser, it should be ok to extend this with some effort.
 
+- Navidrome may fail to import tracks on some playlists.
+  - There's not too much that can reasonably be done about this outside of Navidrome.
+    The way `apple_navidrome` creates playlists is by:
+    - Reading metadata stored in the Apple Music XML file.
+    -  Each track has an internal id, and a playlist is a name and list of those internal ids.
+    -  `apple_navidrome` then matches each internal id to the track in the Apple Music XML file and then writes out some metadata takes from the Apple Music XML to an m3u file.
+    Notably, title and location are written to the m3u and other m3u readers, such as VLC, read the location data fine.
+    So, my guess is there's some conflict how Apple Music stores location and how Navidrome reads location.
+    (One option is to lookup the track in the Navidrome database and write the m3u location based on what Navidrome stores, but that's outside my definition of 'reasonable', for now…)
+
 - There is no documentation, though some attempt has been made to report errors in a helpful way.
