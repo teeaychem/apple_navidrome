@@ -1,39 +1,27 @@
 use chrono::{DateTime, Utc};
-use std::{num::ParseIntError, time::Duration};
+use std::time::Duration;
 
 use xml::{common::Position, reader::XmlEvent};
 
 use crate::{
-    structs::{
-        track::{Track, TrackErr},
-        Library, TrackID,
+    structs::{track::Track, Library},
+    xml_reader::{
+        self,
+        err::{self},
     },
-    xml_reader::{self},
 };
 
 use super::LibraryXmlReader;
 
-impl From<chrono::ParseError> for TrackErr {
-    fn from(error: chrono::ParseError) -> Self {
-        TrackErr::ParseDateTime(error)
-    }
-}
-
-impl From<ParseIntError> for TrackErr {
-    fn from(error: ParseIntError) -> Self {
-        TrackErr::ParseInt(error)
-    }
-}
-
 #[rustfmt::skip]
-pub fn get_track(reader: &mut xml_reader::LibraryXmlReader) -> Result<Track, TrackErr> {
+pub fn get_track(reader: &mut xml_reader::LibraryXmlReader) -> Result<Track, err::LibraryXmlReader> {
     let _ = reader.forward();
     let mut the_track = Track::default();
     loop {
         match reader.peek() {
             XmlEvent::StartElement { .. } => {
-                let key = reader.element_as_string(Some("key")).unwrap();
-                let value = reader.element_as_string(None).unwrap();
+                let key = reader.element_as_string(Some("key"))?;
+                let value = reader.element_as_string(None)?;
                 match key.as_str() {
 
                     "Album Artist" => the_track.album_artist = Some(value),
@@ -84,7 +72,7 @@ pub fn get_track(reader: &mut xml_reader::LibraryXmlReader) -> Result<Track, Tra
                     "Sort Name" => {}
                     "Total Time" => the_track.duration = Duration::from_millis(value.parse::<u64>()?),
                     "Track Count" => the_track.total_tracks = Some(value.parse::<usize>()?),
-                    "Track ID" => the_track.id = value.parse::<TrackID>()?,
+                    "Track ID" => the_track.id = value,
                     "Track Number" => the_track.track_number = Some(value.parse::<usize>()?),
                     "Track Type" => {}
                     "Volume Adjustment" => {}
@@ -93,21 +81,30 @@ pub fn get_track(reader: &mut xml_reader::LibraryXmlReader) -> Result<Track, Tra
 
                     // missed something?
                     _ => {
-                        let title = the_track.title.clone().unwrap_or("[No title]".to_string());
-                        let artist = the_track
-                            .artist
-                            .clone()
-                            .unwrap_or("[No artist]".to_string());
-                        println!("Unexpected key:\n\t\"{key}\" with value\n\t\"{value}\"\nwhen reading{title} by{artist}.");
+                        let title = match &the_track.title {
+                            Some(found) => found,
+                            None => "[No title]"
+                        };
+                        let artist = match &the_track.artist {
+                            Some(found) => found,
+                            None => "[No artist]",
+                        };
+                        println!("Unexpected key:\n\t\"{key}\" with value\n\t\"{value}\"\nwhen reading{title} by {artist}.");
                     }
                 }
             }
             XmlEvent::EndElement { name } => {
-                if name.local_name == "dict" {
-                    let _ = reader.forward();
-                    break;
-                } else {
-                    panic!();
+                match name.local_name.as_str() {
+                    "dict" => {
+                        let _ = reader.forward();
+                        break;
+                    }
+                    _ => {
+                        return Err(err::LibraryXmlReader::UnexpectedKey {
+                            position: reader.parser.position(),
+                            key: name.local_name.to_owned(),
+                        })
+                    }
                 }
             }
             _ => {}
@@ -127,17 +124,19 @@ impl Library {
             match reader.peek() {
                 XmlEvent::StartElement { name, .. } => {
                     //
-                    if name.local_name == "key" {
-                        let id = reader
-                            .element_as_string(Some("key"))
-                            .unwrap()
-                            .parse::<usize>()
-                            .expect("id?");
-                        let track = get_track(reader)?;
-                        assert_eq!(id, track.id);
-                        self.tracks.insert(id, track);
-                    } else {
-                        panic!("Failed to process track {}", reader.parser.position());
+                    match name.local_name.as_str() {
+                        "key" => {
+                            let id = reader.element_as_string(Some("key"))?;
+                            let track = get_track(reader)?;
+                            assert_eq!(id, track.id);
+                            self.tracks.insert(id, track);
+                        }
+                        _ => {
+                            return Err(err::LibraryXmlReader::UnexpectedKey {
+                                position: reader.parser.position(),
+                                key: name.local_name.to_owned(),
+                            });
+                        }
                     }
                 }
                 XmlEvent::EndElement { .. } => {

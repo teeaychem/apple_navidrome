@@ -19,8 +19,6 @@ impl Drop for NavidromeWriter {
         let mut tmp = Connection::open_in_memory().unwrap();
         std::mem::swap(&mut self.db, &mut tmp);
         tmp.close();
-
-
     }
 }
 
@@ -49,10 +47,10 @@ impl<'t> TrackMatcher<'t> {
         // to ensure the formatted string lives suffiently long, if used
         // the like is used as (at least sometimes) without a track apple music uses the filename while navidrome uses a path
         // as the filename is included in the path, things work out
-        let track_hack = Box::leak(Box::new(format!(
-            "%{}",
-            &track.title.clone().unwrap_or("".to_string())
-        )));
+        let track_hack = match &track.title {
+            Some(t) => Box::leak(Box::new(format!("%{t}"))),
+            None => Box::leak(Box::new("%".to_string())),
+        };
         if let Some(_use_hack) = &track.title {
             identifier.selections.push("title");
             identifier.parameters.push((":title", track_hack));
@@ -105,7 +103,7 @@ impl NavidromeWriter {
         let mut stmt = self.db.prepare(&query_string)?;
         let mut rows = stmt.query(matcher.parameters())?;
         while let Some(row) = rows.next()? {
-            let id: Option<String> = row.get("id").unwrap();
+            let id: Option<String> = row.get("id")?;
             if let Some(found) = id {
                 item_ids.push(found.clone());
                 matcher.item_id = Some(found);
@@ -121,7 +119,7 @@ impl NavidromeWriter {
         let mut stmt = self.db.prepare(query_string)?;
         let mut rows = stmt.query(&[(":name", artist)])?;
         while let Some(row) = rows.next()? {
-            let id: Option<String> = row.get("id").unwrap();
+            let id: Option<String> = row.get("id")?;
             if let Some(found) = id {
                 return Ok(Some(found));
             }
@@ -140,7 +138,7 @@ impl NavidromeWriter {
         let mut stmt = self.db.prepare(query_string)?;
         let mut rows = stmt.query(&[(":name", album), (":artist_id", artist_id)])?;
         while let Some(row) = rows.next()? {
-            let id: Option<String> = row.get("id").unwrap();
+            let id: Option<String> = row.get("id")?;
             if let Some(found) = id {
                 return Ok(Some(found));
             }
@@ -187,8 +185,8 @@ VALUES
         let mut stmt = self.db.prepare(Self::UPDATE_SCHEMA)?;
         match stmt.execute(&params) {
             Err(e) => {
-                let id = &matcher.item_id.clone().unwrap();
-                log::error!("Error updating track {id}: {e:?}");
+                let id = &matcher.item_id;
+                log::error!("Error updating track {id:?}: {e:?}");
                 Ok(())
             }
             Ok(_) => Ok(()),
@@ -201,17 +199,17 @@ VALUES
         user_id: &str,
     ) -> Result<(), rusqlite::Error> {
         'artist_loop: for (artist, counts) in &library.counts {
-            let artist_id = self.artist_id(artist.as_str())?;
-            if artist_id.is_none() {
-                log::trace!(
-                    "Could not find an artist in the navidrome database: {artist}"
-                );
-                continue 'artist_loop;
-            }
-            let artist_id = artist_id.unwrap();
-            self.update_artist(&artist_id, counts.count, user_id)?;
-            for (album, count) in &counts.albums {
-                self.update_album(album, *count, &artist_id, user_id)?;
+            match self.artist_id(artist.as_str())? {
+                Some(artist_id) => {
+                    self.update_artist(&artist_id, counts.count, user_id)?;
+                    for (album, count) in &counts.albums {
+                        self.update_album(album, *count, &artist_id, user_id)?;
+                    }
+                }
+                None => {
+                    log::trace!("Could not find an artist in the navidrome database: {artist}");
+                    continue 'artist_loop;
+                }
             }
         }
         Ok(())
@@ -246,26 +244,28 @@ VALUES
         artist_id: &str,
         user_id: &str,
     ) -> Result<(), rusqlite::Error> {
-        let album_id = self.album_id(album, artist_id)?;
-        if album_id.is_none() {
-            log::trace!("Could not find an album in the navidrome database: {album}");
-            return Ok(());
+        match self.album_id(album, artist_id)? {
+            Some(album_id) => {
+                let params: [(&str, &dyn ToSql); 8] = [
+                    (":user_id", &user_id),
+                    (":item_id", &album_id),
+                    (":item_type", &"album"),
+                    (":play_count", &count),
+                    (":play_date", &None::<DateTime<Utc>>),
+                    (":rating", &None::<usize>),
+                    (":starred", &None::<bool>),
+                    (":starred_at", &None::<DateTime<Utc>>),
+                ];
+                let mut stmt = self.db.prepare(Self::UPDATE_SCHEMA).expect("oh");
+                if let Err(e) = stmt.execute(&params) {
+                    log::error!("Error updating album: {e:?}");
+                }
+            }
+            None => {
+                log::trace!("Could not find an album in the navidrome database: {album}");
+            }
         }
-        let album_id = album_id.unwrap();
-        let params: [(&str, &dyn ToSql); 8] = [
-            (":user_id", &user_id),
-            (":item_id", &album_id),
-            (":item_type", &"album"),
-            (":play_count", &count),
-            (":play_date", &None::<DateTime<Utc>>),
-            (":rating", &None::<usize>),
-            (":starred", &None::<bool>),
-            (":starred_at", &None::<DateTime<Utc>>),
-        ];
-        let mut stmt = self.db.prepare(Self::UPDATE_SCHEMA).expect("oh");
-        if let Err(e) = stmt.execute(&params) {
-            log::error!("Error updating album: {e:?}");
-        }
+
         Ok(())
     }
 
@@ -276,7 +276,7 @@ VALUES
         let mut stmt = self.db.prepare(&query_string)?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
-            let id = row.get("id").unwrap();
+            let id = row.get("id")?;
             ids.push(id);
         }
 
