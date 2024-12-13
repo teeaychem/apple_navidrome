@@ -23,7 +23,7 @@ impl Playlist {
         path: &Path,
         tracks: &TrackMap,
     ) -> Result<(), xml_reader::err::LibraryXmlReader> {
-        let playlist_filename = format!("{}.m3u8", self.name);
+        let playlist_filename = format!("{}.m3u", self.name);
         let playlist_path = path.join(Path::new(&playlist_filename));
         match File::create(playlist_path.clone()) {
             Ok(mut file) => {
@@ -57,7 +57,7 @@ impl Playlist {
                 }
             }
             Err(_) => {
-                println!("Failed to create a file for playlist {}", self.name);
+                log::error!("Failed to create a file for playlist {}", self.name);
             }
         }
         Ok(())

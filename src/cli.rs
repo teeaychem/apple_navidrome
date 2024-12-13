@@ -1,7 +1,4 @@
-use apple_navidrome_lib::{
-    navidrome_writer::{NavidromeWriter, TrackMatcher},
-    structs::{track::Track, Library},
-};
+use apple_navidrome_lib::{config::Config, navidrome_writer::NavidromeWriter, structs::Library};
 
 /*
 Notes on fields:
@@ -49,131 +46,96 @@ pub mod err {
 
 fn main() -> Result<(), err::Cli> {
     let mut clog = colog::default_builder();
-    clog.filter_level(log::LevelFilter::Debug);
     clog.init();
+    clog.filter_level(log::LevelFilter::Error);
+    let config = Config::from_file();
 
-    let mut library = Library::from_xml(std::path::Path::new("Library.xml"))?;
+    clog.filter_level(config.get_log_level());
+
+    let mut library = Library::from_xml(&config.apple_music_library)?;
     // let library = Library::from_json(std::path::Path::new("Library.json")).unwrap();
-    log::info!("Read {} tracks", library.tracks.keys().count());
-    log::info!("Read {} playlists", library.playlists.len());
-    library.artist_album_playcounts();
+    log::info!("Found {} tracks", library.tracks.keys().count());
+    log::info!("Found {} playlists", library.playlists.len());
+    library.derive_artist_album_playcounts();
 
-    let nd_db_path = "./navidrome.db";
-    let backup = format!("{nd_db_path}.backup.db");
-    match std::fs::copy(nd_db_path, &backup) {
-        Err(_) => {
-            log::error!(
-                "Failed to create a copy of the navidrome database, no further action taken"
-            );
-            std::process::exit(1)
-        }
-        Ok(_) => {
-            log::info!("A copy of the navidrome database has made.");
-        }
-    };
-    let writer = NavidromeWriter::from(std::path::Path::new(&backup))?;
-    let user_id = {
-        let user = "user";
-        let ids = writer.user_ids(user)?;
-        match &ids[..] {
-            [] => {
-                log::error!("No user \"{user}\" found.");
-                std::process::exit(1);
+    if config.update_navidrome {
+        match std::fs::copy(
+            &config.navidrome_import_database,
+            &config.navidrome_export_database,
+        ) {
+            Err(_) => {
+                log::error!("Failed to create a copy of the navidrome database for export");
+                log::error!("Exiting without any further action.");
+                std::process::exit(1)
             }
-            [unique] => {
-                log::info!("User \"{user}\" found with id: {unique}");
-                unique.to_owned()
+            Ok(_) => {
+                log::info!("A copy of the navidrome database has made.");
             }
-            _ => {
-                log::error!("Multiple ids found for user \"{user}\".");
-                std::process::exit(1);
-            }
-        }
-    };
+        };
 
-    let mut failed_matches = vec![];
-    let mut multiple_matches = vec![];
-    for track in library.tracks.values() {
-        let mut matcher = TrackMatcher::from_track(track);
-        let ids = writer.item_ids(&mut matcher)?;
-        match ids.len() {
-            0 => failed_matches.push(track), // missing track
-            1 => {
-                // unique track
-                writer.update_match(&matcher, &user_id);
-                // update_match(&matcher, &db)?;
+        let writer =
+            NavidromeWriter::from(std::path::Path::new(&config.navidrome_export_database))?;
+        let user_id = writer.get_navidrome_user_id(&config);
+
+        writer.update_tracks(&library, &user_id, &config);
+
+        match writer.set_artist_album_counts(&library, &user_id) {
+            Ok(_) => {}
+            Err(e) => {
+                log::error!("Error updating artist counts:\n{e:?}");
             }
-            _ => multiple_matches.push(track), // multiple tracks
-        }
-    }
-    if !failed_matches.is_empty() {
-        match write_failed_matches(failed_matches) {
-            Ok(_) => {},
-            Err(e) => log::warn!("Some tracks from Apple Music could not be matched to a track in the navidrome database.
-An error occurred when attempting to write these to a file: {e:?}")
-}
-    }
-    if !multiple_matches.is_empty() {
-        match write_multiple_matches(multiple_matches) {
-            Ok(_) => {},
-            Err(e) => log::warn!("Some tracks from Apple Music were matched to multiple tracks in the navidrome database.
-An error occurred when attempting to write these to a file: {e:?}")
-}
+        };
     }
 
-    match writer.update_artist_album_counts(&library, &user_id) {
-        Ok(_) => {}
-        Err(e) => {
-            log::error!("Error updating artist counts:\n{e:?}");
+    if config.apple_music_library_export_json {
+        match library.json_export(&config.apple_music_library_json_export_path) {
+            Ok(_) => {
+                log::info!("Apple music library json export ok");
+            }
+            Err(e) => {
+                log::error!("Error when exporting apple music library to JSON\n{e:?}")
+            }
         }
-    };
+    }
 
-    // for nf in &not_found {
-    //     dbg!(nf);
-    // }
-
-    // println!("Read {} tracks", library.tracks.keys().count());
-    // println!("Read {} playlists", library.playlists.len());
-    // let skip_lists = Vec::from(["Library", "Downloaded", "Music"]);
-
-    // let playlist_dir_path = std::path::Path::new(PLAYLIST_DIR);
-    // std::fs::create_dir(playlist_dir_path);
-    // for playlist in &library.playlists {
-    //     if skip_lists.iter().any(|l| *l == playlist.name) || playlist.folder {
-    //         continue;
-    //     }
-    //     println!("Creating {}", playlist.name);
-    //     playlist.export_m3u(playlist_dir_path, &library.tracks);
-    // }
+    if config.export_apple_music_playlists {
+        export_playlists(&library, &config);
+    }
 
     Ok(())
 }
 
-pub fn write_failed_matches(failed_matches: Vec<&Track>) -> Result<(), err::Cli> {
-    let fail_match_path = "failed_matches.json";
-    let mut fail_match_file = std::fs::File::create(fail_match_path)?;
-    let _ = std::io::Write::write_all(
-        &mut fail_match_file,
-        serde_json::to_string_pretty(&failed_matches)?.as_bytes(),
-    );
-    log::warn!(
-        "Some tracks from Apple Music could not be matched to a track in the navidrome database.
-A JSON file containing these tracks has been written to {fail_match_path}."
-    );
-    Ok(())
-}
+pub fn export_playlists(library: &Library, config: &Config) {
+    if !std::fs::exists(&config.apple_music_playlist_export_directory).unwrap_or(true) {
+        match std::fs::create_dir(&config.apple_music_playlist_export_directory) {
+            Ok(_) => {}
+            Err(e) => {
+                log::error!("Could not create directory for playlists.");
+                log::error!("{e:?}");
+                return;
+            }
+        }
+    }
 
-pub fn write_multiple_matches(multiple_matches: Vec<&Track>) -> Result<(), err::Cli> {
-    let mismatch_path = "multiple_matches.json";
-    let mut mismatch_file = std::fs::File::create(mismatch_path)?;
-
-    let _ = std::io::Write::write_all(
-        &mut mismatch_file,
-        serde_json::to_string_pretty(&multiple_matches)?.as_bytes(),
-    );
-    log::warn!(
-        "Some tracks from Apple Music were matched to multiple tracks in the navidrome database.
-A JSON file containing these tracks has been written to {mismatch_path}."
-    );
-    Ok(())
+    for playlist in &library.playlists {
+        if config
+            .apple_music_ignored_playlists
+            .iter()
+            .any(|l| *l == playlist.name)
+            || playlist.folder
+        {
+            continue;
+        }
+        log::trace!("Creating playlist: {}", playlist.name);
+        match playlist.export_m3u(
+            &config.apple_music_playlist_export_directory,
+            &library.tracks,
+        ) {
+            Ok(_) => {}
+            Err(e) => {
+                log::warn!("Error when creating playlist {}:", playlist.name);
+                log::warn!("{e:?}");
+            }
+        };
+    }
 }

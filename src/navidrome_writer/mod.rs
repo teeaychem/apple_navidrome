@@ -1,4 +1,7 @@
-use crate::structs::{track::Track, Library};
+use crate::{
+    config::Config,
+    structs::{track::Track, Library},
+};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, Result, ToSql};
 
@@ -18,7 +21,16 @@ impl Drop for NavidromeWriter {
     fn drop(&mut self) {
         let mut tmp = Connection::open_in_memory().unwrap();
         std::mem::swap(&mut self.db, &mut tmp);
-        tmp.close();
+        match tmp.close() {
+            Ok(_) => {}
+            Err(e) => {
+                log::error!(
+                    "An error occurred when trying to save the updated navidrome database.
+Navidrome might not mind if the database has been corrupted, but be careful.
+{e:?}"
+                );
+            }
+        };
     }
 }
 
@@ -193,22 +205,25 @@ VALUES
         }
     }
 
-    pub fn update_artist_album_counts(
+    pub fn set_artist_album_counts(
         &self,
         library: &Library,
         user_id: &str,
     ) -> Result<(), rusqlite::Error> {
         'artist_loop: for (artist, counts) in &library.counts {
-            match self.artist_id(artist.as_str())? {
-                Some(artist_id) => {
+            match self.artist_id(artist.as_str()) {
+                Ok(Some(artist_id)) => {
                     self.update_artist(&artist_id, counts.count, user_id)?;
                     for (album, count) in &counts.albums {
                         self.update_album(album, *count, &artist_id, user_id)?;
                     }
                 }
-                None => {
+                Ok(None) => {
                     log::trace!("Could not find an artist in the navidrome database: {artist}");
                     continue 'artist_loop;
+                }
+                Err(e) => {
+                    log::error!("Failed to update artist: {:?}\n{e:?}", &artist);
                 }
             }
         }
@@ -232,7 +247,7 @@ VALUES
             (":starred_at", &None::<DateTime<Utc>>),
         ];
 
-        let mut stmt = self.db.prepare(Self::UPDATE_SCHEMA).expect("oh");
+        let mut stmt = self.db.prepare(Self::UPDATE_SCHEMA)?;
         stmt.execute(&params)?;
         Ok(())
     }
@@ -256,7 +271,7 @@ VALUES
                     (":starred", &None::<bool>),
                     (":starred_at", &None::<DateTime<Utc>>),
                 ];
-                let mut stmt = self.db.prepare(Self::UPDATE_SCHEMA).expect("oh");
+                let mut stmt = self.db.prepare(Self::UPDATE_SCHEMA)?;
                 if let Err(e) = stmt.execute(&params) {
                     log::error!("Error updating album: {e:?}");
                 }
@@ -282,4 +297,111 @@ VALUES
 
         Ok(ids)
     }
+
+    pub fn update_tracks(&self, library: &Library, user_id: &str, config: &Config) {
+        let mut failed_matches = vec![];
+        let mut multiple_matches = vec![];
+        for track in library.tracks.values() {
+            let mut matcher = TrackMatcher::from_track(track);
+            let ids = self.item_ids(&mut matcher).unwrap();
+            match ids.len() {
+                0 => failed_matches.push(track), // missing track
+                1 => {
+                    // unique track
+                    match self.update_match(&matcher, user_id) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            log::error!("Failed to update track: {:?}\n{e:?}", &track.title);
+                        }
+                    };
+                }
+                _ => multiple_matches.push(track), // multiple tracks
+            }
+        }
+
+        if !failed_matches.is_empty() {
+            match write_failed_matches(failed_matches, config) {
+            Ok(_) => {},
+            Err(e) => log::warn!("Some tracks from Apple Music could not be matched to a track in the navidrome database.
+An error occurred when attempting to write these to a file: {e:?}")
+}
+        }
+        if !multiple_matches.is_empty() {
+            match write_multiple_matches(multiple_matches, config) {
+            Ok(_) => {},
+            Err(e) => log::warn!("Some tracks from Apple Music were matched to multiple tracks in the navidrome database.
+An error occurred when attempting to write these to a file: {e:?}")
+}
+        }
+    }
+
+    pub fn get_navidrome_user_id(&self, config: &Config) -> String {
+        match &config.navidrome_user_id {
+            Some(id) => {
+                log::info!("user_id from config: {id}");
+                id.clone()
+            }
+            None => {
+                let user = &config.navidrome_user;
+                let ids = match self.user_ids(&config.navidrome_user) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        log::error!("Failed to get possible user ids from the navidrome database");
+                        log::error!("{e:?}");
+                        std::process::exit(1);
+                    }
+                };
+                match &ids[..] {
+                    [] => {
+                        log::error!("No user \"{user}\" found.");
+                        std::process::exit(1);
+                    }
+                    [unique] => {
+                        log::info!("User \"{user}\" found with id: {unique}");
+                        unique.to_owned()
+                    }
+                    _ => {
+                        log::error!("Multiple ids found for user \"{user}\".");
+                        log::error!("Please add a database id to the config file");
+                        log::error!("For example, a line which reads (though your ):");
+                        log::error!("navidrome_user_id = \"d868f4b6-1d16-4c05-ae0c-4aca4ef42788\"");
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn write_failed_matches(
+    failed_matches: Vec<&Track>,
+    config: &Config,
+) -> Result<(), std::io::Error> {
+    let mut fail_match_file = std::fs::File::create(config.info_path(&config.no_match_file))?;
+    let _ = std::io::Write::write_all(
+        &mut fail_match_file,
+        serde_json::to_string_pretty(&failed_matches)?.as_bytes(),
+    );
+    log::warn!(
+        "Some tracks from Apple Music could not be matched to a track in the navidrome database.
+A file containing these tracks has been made."
+    );
+    Ok(())
+}
+
+fn write_multiple_matches(
+    multiple_matches: Vec<&Track>,
+    config: &Config,
+) -> Result<(), std::io::Error> {
+    let mut mismatch_file = std::fs::File::create(config.info_path(&config.multiple_matches_file))?;
+
+    let _ = std::io::Write::write_all(
+        &mut mismatch_file,
+        serde_json::to_string_pretty(&multiple_matches)?.as_bytes(),
+    );
+    log::warn!(
+        "Some tracks from Apple Music were matched to multiple tracks in the navidrome database.
+A file containing these tracks has been made."
+    );
+    Ok(())
 }

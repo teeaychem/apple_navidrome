@@ -28,7 +28,7 @@ pub struct ArtistCount {
 }
 
 impl Library {
-    pub fn artist_album_playcounts(&mut self) {
+    pub fn derive_artist_album_playcounts(&mut self) {
         'track_loop: for track in self.tracks.values() {
             let artist = match &track.artist {
                 Some(found) => found,
@@ -51,7 +51,7 @@ impl Library {
 
 impl Library {
     pub fn json_export(&self, path: &std::path::Path) -> Result<(), std::io::Error> {
-        let library_json = serde_json::to_string(self)?;
+        let library_json = serde_json::to_string_pretty(self)?;
         let mut file = std::fs::File::create(path)?;
         std::io::Write::write_all(&mut file, library_json.as_bytes())?;
         Ok(())
