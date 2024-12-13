@@ -35,17 +35,22 @@ impl Playlist {
                         None => {
                             return Err(xml_reader::err::LibraryXmlReader::MissingTrack {
                                 playlist: self.name.to_owned(),
-                                track_id: *id,
+                                track_id: id.clone(),
                             })
                         }
                     };
-
+                    let title = match &track.title {
+                        Some(found) => found,
+                        None => "[No title]",
+                    };
+                    let artist = match &track.artist {
+                        Some(found) => found,
+                        None => "[No artist]",
+                    };
                     writeln!(
                         file,
-                        "#EXTINF:{},{} - {}",
+                        "#EXTINF:{},{artist} - {title}",
                         track.duration.as_secs(),
-                        track.artist.clone().unwrap_or("[No artist]".to_string()),
-                        track.title.clone().unwrap_or("[No title]".to_string())
                     )?;
                     let abs_pth = &track.location;
                     writeln!(file, "{}", abs_pth)?;

@@ -7,7 +7,6 @@ use xml::common::{Position, TextPosition};
 
 use xml::reader::{EventReader, ParserConfig2, XmlEvent};
 
-use crate::structs::track::TrackErr;
 use crate::structs::Library;
 
 pub mod playlists;
@@ -60,7 +59,19 @@ pub mod err {
             playlist: String,
             track_id: TrackID,
         },
-        Track(TrackErr),
+        ParseDateTime(chrono::ParseError),
+        ParseInt(std::num::ParseIntError),
+        UnexpectedKV {
+            key: String,
+            value: String,
+        },
+        UnexpectedEvent {
+            position: TextPosition,
+            event: XmlEvent,
+        },
+        ExpectedBooleanTag {
+            position: TextPosition,
+        }
     }
 }
 
@@ -76,9 +87,15 @@ impl From<std::io::Error> for err::LibraryXmlReader {
     }
 }
 
-impl From<TrackErr> for err::LibraryXmlReader {
-    fn from(error: TrackErr) -> Self {
-        err::LibraryXmlReader::Track(error)
+impl From<chrono::ParseError> for err::LibraryXmlReader {
+    fn from(error: chrono::ParseError) -> Self {
+        err::LibraryXmlReader::ParseDateTime(error)
+    }
+}
+
+impl From<std::num::ParseIntError> for err::LibraryXmlReader {
+    fn from(error: std::num::ParseIntError) -> Self {
+        err::LibraryXmlReader::ParseInt(error)
     }
 }
 
@@ -235,7 +252,7 @@ impl Library {
         &mut self,
         path: &Path,
     ) -> Result<(), crate::xml_reader::err::LibraryXmlReader> {
-        let mut reader = LibraryXmlReader::new(path).unwrap();
+        let mut reader = LibraryXmlReader::new(path)?;
         // skip until library dictionary
         loop {
             if let Ok(xml::reader::XmlEvent::StartElement { name, .. }) = reader.forward() {
@@ -249,28 +266,27 @@ impl Library {
             match reader.peek() {
                 xml::reader::XmlEvent::StartElement { name, .. } => {
                     if name.local_name == "key" {
-                        let key = reader.element_as_string(Some("key")).unwrap();
+                        let key = reader.element_as_string(Some("key"))?;
                         match key.as_str() {
                             "Tracks" => self.import_tracks(&mut reader)?,
                             "Playlists" => self.import_playlists(&mut reader)?,
                             "Date" => {
-                                let value = reader.element_as_string(None).unwrap();
+                                let value = reader.element_as_string(None)?;
                                 if let Ok(date) = value.parse::<DateTime<chrono::Utc>>() {
                                     self.date = date;
                                 }
                             }
                             _ => {
-                                let value = reader.element_as_string(None).unwrap();
+                                let value = reader.element_as_string(None)?;
                                 log::debug!(
                                     "Ignored top level Apple Music key/value pair: {key} | {value}"
                                 );
                             }
                         }
                     } else {
-                        panic!(
-                            "{} :Unexpected xml start element {name}",
-                            xml::common::Position::position(&reader.parser)
-                        );
+                        return Err(err::LibraryXmlReader::UnexpectedElement {
+                            position: reader.parser.position(),
+                        });
                     }
                 }
                 xml::reader::XmlEvent::EndElement { .. } => {
@@ -278,11 +294,10 @@ impl Library {
                     break;
                 }
                 _ => {
-                    panic!(
-                        "{} : Unexpected xml event {:?}",
-                        xml::common::Position::position(&reader.parser),
-                        reader.peek()
-                    );
+                    return Err(err::LibraryXmlReader::UnexpectedEvent {
+                        position: reader.parser.position(),
+                        event: reader.peek().to_owned(),
+                    });
                 }
             }
         }

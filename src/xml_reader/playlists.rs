@@ -2,7 +2,7 @@ use xml::common::Position;
 use xml::reader::XmlEvent;
 
 use crate::{
-    structs::playlist::Playlist,
+    structs::{playlist::Playlist, TrackID},
     xml_reader::{self},
 };
 
@@ -16,14 +16,16 @@ pub fn get_playlist(
     loop {
         match reader.peek() {
             XmlEvent::StartElement { name, .. } => {
-                //
+                // copies for error reporting, while allowing ok matches to take ownership
+                let the_key = name.local_name.clone();
+                let the_position = reader.parser.position();
                 match name.local_name.as_str() {
                     "key" => {
-                        let key = reader.element_as_string(Some("key")).unwrap();
+                        let key = reader.element_as_string(Some("key"))?;
                         if key == "Playlist Items" {
                             the_playlist.track_ids = playlist_ids(reader)?;
                         } else {
-                            let value = reader.element_as_string(None).unwrap();
+                            let value = reader.element_as_string(None)?;
                             match key.as_str() {
                                 "Name" => the_playlist.name = value,
                                 "Description" => the_playlist.description = value,
@@ -32,20 +34,36 @@ pub fn get_playlist(
                                 "Folder" => match value.as_str() {
                                     "true" => the_playlist.folder = true,
                                     "false" => the_playlist.folder = false,
-                                    _ => panic!("Unexpected"),
+                                    _ => {
+                                        return Err(err::LibraryXmlReader::ExpectedBooleanTag {
+                                            position: reader.parser.position(),
+                                        })
+                                    }
                                 },
-                                "Master" | "Playlist ID" | "Smart Info" | "Smart Criteria"
-                                | "Distinguished Kind" | "Music" | "Visible" | "All Items" => {
-                                    // skip these
+                                "Master" => {}
+                                "Playlist ID" => {}
+                                "Smart Info" => {}
+                                "Smart Criteria" => {}
+                                "Distinguished Kind" => {}
+                                "Music" => {}
+                                "Visible" => {}
+                                "All Items" => {}
+                                _ => {
+                                    log::error!("Playlist parsing failed");
+                                    return Err(err::LibraryXmlReader::UnexpectedKey {
+                                        position: the_position,
+                                        key: the_key,
+                                    });
                                 }
-                                _ => panic!(
-                                    "{} : Playlist parsing failed ({key})",
-                                    reader.parser.position()
-                                ),
                             }
                         }
                     }
-                    _ => panic!("Failed to process track {}", reader.parser.position()),
+                    _ => {
+                        return Err(err::LibraryXmlReader::UnexpectedKey {
+                            position: reader.parser.position(),
+                            key: the_key,
+                        })
+                    }
                 }
             }
             XmlEvent::EndElement { .. } => {
@@ -60,7 +78,7 @@ pub fn get_playlist(
 
 pub fn playlist_ids(
     reader: &mut LibraryXmlReader,
-) -> Result<Vec<usize>, xml_reader::err::LibraryXmlReader> {
+) -> Result<Vec<TrackID>, xml_reader::err::LibraryXmlReader> {
     let mut ids = Vec::default();
     reader.eat_start("array")?;
     loop {
@@ -69,11 +87,7 @@ pub fn playlist_ids(
                 if name.local_name == "dict" {
                     reader.eat_start("dict")?;
                     let _key = reader.element_as_string(Some("key"));
-                    let id = reader
-                        .element_as_string(Some("integer"))
-                        .unwrap()
-                        .parse::<usize>()
-                        .unwrap();
+                    let id = reader.element_as_string(Some("integer"))?;
                     ids.push(id);
                     reader.eat_end("dict")?;
                 }
@@ -103,19 +117,18 @@ impl Library {
                         "dict" => {
                             self.playlists.push(get_playlist(reader)?);
                         }
-                        _ => panic!("Failed to process track {}", reader.parser.position()),
+                        _ => {
+                            return Err(err::LibraryXmlReader::UnexpectedKey {
+                                position: reader.parser.position(),
+                                key: name.local_name.to_owned(),
+                            })
+                        }
                     }
                 }
                 XmlEvent::EndElement { .. } => {
-                    //
                     reader.eat_end("array")?;
                     break;
                 }
-
-                XmlEvent::Characters(chars) => {
-                    panic!("Found chars {chars}");
-                }
-
                 _ => {}
             }
         }

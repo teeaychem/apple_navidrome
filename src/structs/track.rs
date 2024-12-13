@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::{num::ParseIntError, time::Duration};
+use std::time::Duration;
 
 use super::TrackID;
 
@@ -40,12 +40,4 @@ pub struct Track {
     pub track_number: Option<usize>,
     pub work: Option<String>,
     pub year: Option<usize>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug)]
-pub enum TrackErr {
-    ParseDateTime(chrono::ParseError),
-    ParseInt(ParseIntError),
-    UnexpectedKV { key: String, value: String },
 }

@@ -1,6 +1,6 @@
 use apple_navidrome_lib::{
     navidrome_writer::{NavidromeWriter, TrackMatcher},
-    structs::Library,
+    structs::{track::Track, Library},
 };
 
 /*
@@ -18,6 +18,20 @@ pub mod err {
     pub enum Cli {
         LibraryXmlReader(xml_reader::err::LibraryXmlReader),
         NavidromeSql(rusqlite::Error),
+        Json(serde_json::Error),
+        Io(std::io::Error),
+    }
+
+    impl From<std::io::Error> for Cli {
+        fn from(error: std::io::Error) -> Self {
+            Cli::Io(error)
+        }
+    }
+
+    impl From<serde_json::Error> for Cli {
+        fn from(error: serde_json::Error) -> Self {
+            Cli::Json(error)
+        }
     }
 
     impl From<xml_reader::err::LibraryXmlReader> for Cli {
@@ -61,15 +75,14 @@ fn main() -> Result<(), err::Cli> {
     let user_id = {
         let user = "user";
         let ids = writer.user_ids(user)?;
-        match &ids.len() {
-            0 => {
+        match &ids[..] {
+            [] => {
                 log::error!("No user \"{user}\" found.");
                 std::process::exit(1);
             }
-            1 => {
-                let unique = ids.first().unwrap().to_owned();
+            [unique] => {
                 log::info!("User \"{user}\" found with id: {unique}");
-                unique
+                unique.to_owned()
             }
             _ => {
                 log::error!("Multiple ids found for user \"{user}\".");
@@ -94,28 +107,18 @@ fn main() -> Result<(), err::Cli> {
         }
     }
     if !failed_matches.is_empty() {
-        let mismatch_path = "failed_matches.json";
-        let mut mismatch_file = std::fs::File::create(mismatch_path).unwrap();
-        let _ = std::io::Write::write_all(
-            &mut mismatch_file,
-            serde_json::to_string_pretty(&failed_matches)
-                .unwrap()
-                .as_bytes(),
-        );
-        log::warn!("Some tracks from Apple Music could not be matched to a track in the navidrome database.
-A JSON file containing these tracks has been written to {mismatch_path}.");
+        match write_failed_matches(failed_matches) {
+            Ok(_) => {},
+            Err(e) => log::warn!("Some tracks from Apple Music could not be matched to a track in the navidrome database.
+An error occurred when attempting to write these to a file: {e:?}")
+}
     }
     if !multiple_matches.is_empty() {
-        let mismatch_path = "multiple_matches.json";
-        let mut mismatch_file = std::fs::File::create(mismatch_path).unwrap();
-        let _ = std::io::Write::write_all(
-            &mut mismatch_file,
-            serde_json::to_string_pretty(&multiple_matches)
-                .unwrap()
-                .as_bytes(),
-        );
-        log::warn!("Some tracks from Apple Music were matched to multiple tracks in the navidrome database.
-A JSON file containing these tracks has been written to {mismatch_path}.");
+        match write_multiple_matches(multiple_matches) {
+            Ok(_) => {},
+            Err(e) => log::warn!("Some tracks from Apple Music were matched to multiple tracks in the navidrome database.
+An error occurred when attempting to write these to a file: {e:?}")
+}
     }
 
     match writer.update_artist_album_counts(&library, &user_id) {
@@ -143,5 +146,34 @@ A JSON file containing these tracks has been written to {mismatch_path}.");
     //     playlist.export_m3u(playlist_dir_path, &library.tracks);
     // }
 
+    Ok(())
+}
+
+pub fn write_failed_matches(failed_matches: Vec<&Track>) -> Result<(), err::Cli> {
+    let fail_match_path = "failed_matches.json";
+    let mut fail_match_file = std::fs::File::create(fail_match_path)?;
+    let _ = std::io::Write::write_all(
+        &mut fail_match_file,
+        serde_json::to_string_pretty(&failed_matches)?.as_bytes(),
+    );
+    log::warn!(
+        "Some tracks from Apple Music could not be matched to a track in the navidrome database.
+A JSON file containing these tracks has been written to {fail_match_path}."
+    );
+    Ok(())
+}
+
+pub fn write_multiple_matches(multiple_matches: Vec<&Track>) -> Result<(), err::Cli> {
+    let mismatch_path = "multiple_matches.json";
+    let mut mismatch_file = std::fs::File::create(mismatch_path)?;
+
+    let _ = std::io::Write::write_all(
+        &mut mismatch_file,
+        serde_json::to_string_pretty(&multiple_matches)?.as_bytes(),
+    );
+    log::warn!(
+        "Some tracks from Apple Music were matched to multiple tracks in the navidrome database.
+A JSON file containing these tracks has been written to {mismatch_path}."
+    );
     Ok(())
 }

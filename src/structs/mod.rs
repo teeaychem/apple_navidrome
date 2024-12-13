@@ -8,7 +8,7 @@ use track::Track;
 pub mod playlist;
 pub mod track;
 
-pub type TrackID = usize;
+pub type TrackID = String;
 pub type TrackMap = std::collections::HashMap<TrackID, Track>;
 type Artist = String;
 type Album = String;
@@ -51,7 +51,7 @@ impl Library {
 
 impl Library {
     pub fn json_export(&self, path: &std::path::Path) -> Result<(), std::io::Error> {
-        let library_json = serde_json::to_string(self).unwrap();
+        let library_json = serde_json::to_string(self)?;
         let mut file = std::fs::File::create(path)?;
         std::io::Write::write_all(&mut file, library_json.as_bytes())?;
         Ok(())
