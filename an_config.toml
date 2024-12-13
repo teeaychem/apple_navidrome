@@ -1,0 +1,41 @@
+# Note, all directory and file are relative to the where apple_navidrome is run from.
+
+# To location of the Apple Music library XML file
+apple_music_library = "Library.xml"
+# Whether to export the parsed fragment of the Apple Music library XML file as a JSON file
+apple_music_library_export_json = true
+# Location to save the parsed fragment of the Apple Music library XML file as a JSON file
+apple_music_library_json_export_path = "Library.json"
+
+# Whether to export Apple Music Playlists
+export_apple_music_playlists = true
+
+# The directory to export playlists to.
+# Playlists will be given the same name as in Apple Music
+apple_music_playlist_export_directory = "playlists"
+# Playlists to ignore
+apple_music_ignored_playlists = [
+    "Library",
+    "Downloaded",
+    "Music",
+]
+
+# Whether to update the Navidrome database
+update_navidrome = true
+# The Navidrome database to read from
+navidrome_import_database = "navidrome.db"
+# The Navidrome database to write updated to (will be created if it does not exist)
+navidrome_export_database = "navidrome_updated.db"
+# The Navidrome user to write updates for
+navidrome_user = "user"
+# Whether to make records of some issues
+record_failed_matches = true
+# Where to write the records to
+info_folder = "info"
+# Names for the record files
+no_match_file = "no_matches.json"
+multiple_matches_file = "multiple_matches.json"
+
+# The log level, set to "trace" to see all message, or "off" to see no messages
+# Options are: off, error, warn, info, debug, and trace.
+log_level = "info"

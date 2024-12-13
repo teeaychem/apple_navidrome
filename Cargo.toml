@@ -8,7 +8,7 @@ name = "apple_navidrome_lib"
 path = "src/lib.rs"
 
 [[bin]]
-name = "apple_navidrome_cli"
+name = "apple_navidrome"
 path = "src/cli.rs"
 
 [dependencies]
