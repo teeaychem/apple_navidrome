@@ -3,10 +3,20 @@ use xml::reader::XmlEvent;
 
 use crate::{
     structs::{playlist::Playlist, TrackID},
-    xml_reader::{self},
+    xml_reader::{self, err},
 };
 
 use super::*;
+
+/// (Optional) List of playlist keys that you might want to ignore; not used below.
+// const IGNORED_KEYS: &[&str] = &[
+//     "Purchased",
+//     "Explicit",
+//     "Playlist Only",
+//     "Disliked",
+//     "Sort Series",
+//     "Clean",
+// ];
 
 pub fn get_playlist(
     reader: &mut LibraryXmlReader,
@@ -16,9 +26,8 @@ pub fn get_playlist(
     loop {
         match reader.peek() {
             XmlEvent::StartElement { name, .. } => {
-                // copies for error reporting, while allowing ok matches to take ownership
+                // Copy key name for logging.
                 let the_key = name.local_name.clone();
-                let the_position = reader.parser.position();
                 match name.local_name.as_str() {
                     "key" => {
                         let key = reader.element_as_string(Some("key"))?;
@@ -40,29 +49,25 @@ pub fn get_playlist(
                                         })
                                     }
                                 },
-                                "Master" => {}
-                                "Playlist ID" => {}
-                                "Smart Info" => {}
-                                "Smart Criteria" => {}
-                                "Distinguished Kind" => {}
-                                "Music" => {}
-                                "Visible" => {}
-                                "All Items" => {}
+                                "Master" => {},
+                                "Playlist ID" => {},
+                                "Smart Info" => {},
+                                "Smart Criteria" => {},
+                                "Distinguished Kind" => {},
+                                "Music" => {},
+                                "Visible" => {},
+                                "All Items" => {},
                                 _ => {
-                                    log::error!("Playlist parsing failed");
-                                    return Err(err::LibraryXmlReader::UnexpectedKey {
-                                        position: the_position,
-                                        key: the_key,
-                                    });
+                                    log::debug!("Ignoring playlist key '{}' with value '{}'", key, value);
+                                    continue; // Skip unknown key/value pair
                                 }
                             }
                         }
                     }
                     _ => {
-                        return Err(err::LibraryXmlReader::UnexpectedKey {
-                            position: reader.parser.position(),
-                            key: the_key,
-                        })
+                        log::debug!("Ignoring unexpected element '{}' in playlist dict", the_key);
+                        let _ = reader.forward();
+                        continue;
                     }
                 }
             }
@@ -70,7 +75,7 @@ pub fn get_playlist(
                 reader.eat_end("dict")?;
                 break;
             }
-            _ => {}
+            _ => { let _ = reader.forward(); continue; }
         }
     }
     Ok(the_playlist)
@@ -86,17 +91,19 @@ pub fn playlist_ids(
             XmlEvent::StartElement { name, .. } => {
                 if name.local_name == "dict" {
                     reader.eat_start("dict")?;
-                    let _key = reader.element_as_string(Some("key"));
+                    let _ = reader.element_as_string(Some("key"));
                     let id = reader.element_as_string(Some("integer"))?;
                     ids.push(id);
                     reader.eat_end("dict")?;
+                } else {
+                    let _ = reader.forward();
                 }
             }
             XmlEvent::EndElement { .. } => {
                 reader.eat_end("array")?;
                 break;
             }
-            _ => {}
+            _ => { let _ = reader.forward(); continue; }
         }
     }
     Ok(ids)
@@ -108,20 +115,18 @@ impl Library {
         reader: &mut LibraryXmlReader,
     ) -> Result<(), xml_reader::err::LibraryXmlReader> {
         reader.eat_start("array")?;
-        // process each track
+        // Process each playlist in the playlists array.
         loop {
             match reader.peek() {
                 XmlEvent::StartElement { name, .. } => {
-                    //
                     match name.local_name.as_str() {
                         "dict" => {
                             self.playlists.push(get_playlist(reader)?);
                         }
                         _ => {
-                            return Err(err::LibraryXmlReader::UnexpectedKey {
-                                position: reader.parser.position(),
-                                key: name.local_name.to_owned(),
-                            })
+                            log::debug!("Ignoring unexpected element '{}' in playlists array", name.local_name);
+                            let _ = reader.forward();
+                            continue;
                         }
                     }
                 }
@@ -129,7 +134,7 @@ impl Library {
                     reader.eat_end("array")?;
                     break;
                 }
-                _ => {}
+                _ => { let _ = reader.forward(); continue; }
             }
         }
         Ok(())
