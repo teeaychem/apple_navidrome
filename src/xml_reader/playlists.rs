@@ -8,64 +8,61 @@ use crate::{
 
 use super::*;
 
-/// (Optional) List of playlist keys that you might want to ignore; not used below.
-// const IGNORED_KEYS: &[&str] = &[
-//     "Purchased",
-//     "Explicit",
-//     "Playlist Only",
-//     "Disliked",
-//     "Sort Series",
-//     "Clean",
-// ];
-
+/// Reads a [Playlist] from `reader`, if possible.
+///
+/// Follows the same pattern as [get_track] with respect to keys.
+/// Specifically, known keys are either used or ignored, while unknown keys are logged.
 pub fn get_playlist(
     reader: &mut LibraryXmlReader,
 ) -> Result<Playlist, xml_reader::err::LibraryXmlReader> {
-    let mut the_playlist = Playlist::default();
+    let mut playlist = Playlist::default();
     reader.eat_start("dict")?;
     loop {
         match reader.peek() {
             XmlEvent::StartElement { name, .. } => {
                 // Copy key name for logging.
-                let the_key = name.local_name.clone();
+                let key = name.local_name.clone();
                 match name.local_name.as_str() {
                     "key" => {
                         let key = reader.element_as_string(Some("key"))?;
                         if key == "Playlist Items" {
-                            the_playlist.track_ids = playlist_ids(reader)?;
+                            playlist.track_ids = playlist_ids(reader)?;
                         } else {
                             let value = reader.element_as_string(None)?;
                             match key.as_str() {
-                                "Name" => the_playlist.name = value,
-                                "Description" => the_playlist.description = value,
-                                "Playlist Persistent ID" => the_playlist.persistent_id = value,
-                                "Parent Persistent ID" => the_playlist.parent_persistent_id = value,
+                                "Description" => playlist.description = value,
+                                "All Items" => {}
+                                "Distinguished Kind" => {}
                                 "Folder" => match value.as_str() {
-                                    "true" => the_playlist.folder = true,
-                                    "false" => the_playlist.folder = false,
+                                    "true" => playlist.folder = true,
+                                    "false" => playlist.folder = false,
                                     _ => {
                                         return Err(err::LibraryXmlReader::ExpectedBooleanTag {
                                             position: reader.parser.position(),
                                         })
                                     }
                                 },
-                                "Master" => {},
-                                "Playlist ID" => {},
-                                "Smart Info" => {},
-                                "Smart Criteria" => {},
-                                "Distinguished Kind" => {},
-                                "Music" => {},
-                                "Visible" => {},
-                                "All Items" => {},
+                                "Master" => {}
+                                "Music" => {}
+                                "Name" => playlist.name = value,
+                                "Parent Persistent ID" => playlist.parent_persistent_id = value,
+                                "Playlist ID" => {}
+                                "Playlist Persistent ID" => playlist.persistent_id = value,
+                                "Smart Criteria" => {}
+                                "Smart Info" => {}
+                                "Visible" => {}
+                                // Skip unknown key/value pair
                                 _ => {
-                                    log::debug!("Ignoring playlist key '{}' with value '{}'", key, value);
-                                    continue; // Skip unknown key/value pair
+                                    log::debug!(
+                                        "Ignoring playlist key '{key}' with value '{value}'"
+                                    );
+                                    continue;
                                 }
                             }
                         }
                     }
                     _ => {
-                        log::debug!("Ignoring unexpected element '{}' in playlist dict", the_key);
+                        log::debug!("Ignoring unexpected element '{key}' in playlist dict");
                         let _ = reader.forward();
                         continue;
                     }
@@ -75,10 +72,17 @@ pub fn get_playlist(
                 reader.eat_end("dict")?;
                 break;
             }
-            _ => { let _ = reader.forward(); continue; }
+            _ => {
+                log::debug!(
+                    "Ignoring unexpected element '{:?}' in playlist dict",
+                    reader.peek()
+                );
+                let _ = reader.forward();
+                continue;
+            }
         }
     }
-    Ok(the_playlist)
+    Ok(playlist)
 }
 
 pub fn playlist_ids(
@@ -103,7 +107,14 @@ pub fn playlist_ids(
                 reader.eat_end("array")?;
                 break;
             }
-            _ => { let _ = reader.forward(); continue; }
+            _ => {
+                log::debug!(
+                    "Ignoring unexpected element '{:?}' when examining playlist ids",
+                    reader.peek()
+                );
+                let _ = reader.forward();
+                continue;
+            }
         }
     }
     Ok(ids)
@@ -118,23 +129,31 @@ impl Library {
         // Process each playlist in the playlists array.
         loop {
             match reader.peek() {
-                XmlEvent::StartElement { name, .. } => {
-                    match name.local_name.as_str() {
-                        "dict" => {
-                            self.playlists.push(get_playlist(reader)?);
-                        }
-                        _ => {
-                            log::debug!("Ignoring unexpected element '{}' in playlists array", name.local_name);
-                            let _ = reader.forward();
-                            continue;
-                        }
+                XmlEvent::StartElement { name, .. } => match name.local_name.as_str() {
+                    "dict" => {
+                        self.playlists.push(get_playlist(reader)?);
                     }
-                }
+                    _ => {
+                        log::debug!(
+                            "Ignoring unexpected element '{}' in playlists array",
+                            name.local_name
+                        );
+                        let _ = reader.forward();
+                        continue;
+                    }
+                },
                 XmlEvent::EndElement { .. } => {
                     reader.eat_end("array")?;
                     break;
                 }
-                _ => { let _ = reader.forward(); continue; }
+                _ => {
+                    log::debug!(
+                        "Ignoring unexpected element '{:?}' in playlist array",
+                        reader.peek()
+                    );
+                    let _ = reader.forward();
+                    continue;
+                }
             }
         }
         Ok(())

@@ -13,120 +13,122 @@ use crate::{
 
 use super::LibraryXmlReader;
 
-/// List of keys to ignore during track XML processing.
-const IGNORED_KEYS: &[&str] = &[
-    "Purchased",
-    "Explicit",
-    "Playlist Only",
-    "Disliked",
-    "Sort Series",
-    "Clean",
-];
-
-#[rustfmt::skip]
-pub fn get_track(reader: &mut xml_reader::LibraryXmlReader) -> Result<Track, err::LibraryXmlReader> {
+/// Reads a track from `reader` and returns a [Track], if possible.
+///
+/// Coverage for keys is incomplete, and splits into three cases:
+/// - A known key has some corresponding [Track] field, in which case the key is recorded to the track.
+/// - A known key has no relevant Track field, in which case the key is ignored.
+/// - An unknown key is found, in which case a debug message is written and the key is ignored.
+///
+/// For example, "Play Date" is a known key but is ignored as the known key "Play Date UTC" allows for easier parsing.
+///
+/// There is no difference in effect between an known key with no relevant Track field and an unknown key, with the exception of a log.
+/// Though, if you'd like to extend [Track] (etc.) then perhaps the known keys are useful!
+pub fn get_track(
+    reader: &mut xml_reader::LibraryXmlReader,
+) -> Result<Track, err::LibraryXmlReader> {
     let _ = reader.forward();
-    let mut the_track = Track::default();
+    let mut track = Track::default();
     loop {
         match reader.peek() {
             XmlEvent::StartElement { .. } => {
                 let key = reader.element_as_string(Some("key"))?;
                 let value = reader.element_as_string(None)?;
                 match key.as_str() {
-                    "Album Artist" => the_track.album_artist = Some(value),
-                    "Album Rating Computed" => {},
-                    "Album Rating" => the_track.album_rating = Some(value.parse::<usize>()?),
-                    "Album" => the_track.album_title = Some(value),
-                    "Artist" => the_track.artist = Some(value),
-                    "Artwork Count" => {},
-                    "BPM" => the_track.bpm = Some(value.parse::<usize>()?),
-                    "Bit Rate" => {},
-                    "Comments" => the_track.comments = Some(value),
-                    "Compilation" => the_track.compiltion = true,
-                    "Composer" => the_track.composer = Some(value),
-                    "Date Added" => the_track.date_added = value.parse::<DateTime<Utc>>()?,
-                    "Date Modified" => the_track.date_modified = value.parse::<DateTime<Utc>>()?,
-                    "Disabled" => {},
-                    "Disc Count" => the_track.disc_count = Some(value.parse::<usize>()?),
-                    "Disc Number" => the_track.disc_number = Some(value.parse::<usize>()?),
-                    "Favorited" => the_track.favourited = true,
-                    "File Folder Count" => {},
-                    "Genre" => the_track.genre = Some(value),
-                    "Grouping" => the_track.grouping = Some(value),
-                    "Kind" => {},
-                    "Library Folder Count" => {},
-                    "Location" => the_track.location = value,
-                    "Loved" => the_track.loved = true,
-                    "Movement Count" => {},
-                    "Movement Name" => the_track.movement_title = Some(value),
-                    "Movement Number" => the_track.movement_number = Some(value.parse::<usize>()?),
-                    "Name" => the_track.title = Some(value),
-                    "Normalization" => {},
-                    "Part Of Gapless Album" => {},
-                    "Persistent ID" => the_track.persistent_id = value,
-                    "Play Count" => the_track.play_count = value.parse::<usize>()?,
-                    "Play Date UTC" => the_track.play_date = Some(value.parse::<DateTime<Utc>>()?),
-                    "Play Date" => {}, // use utc variant
-                    "Rating Computed" => {},
-                    "Rating" => the_track.rating = value.parse::<usize>()?,
-                    "Release Date" => the_track.release_data = Some(value.parse::<DateTime<Utc>>()?),
-                    "Sample Rate" => {},
-                    "Size" => the_track.size = value.parse::<usize>()?,
-                    "Skip Count" => the_track.skip_count = value.parse::<usize>()?,
-                    "Skip Date" => the_track.skip_date = Some(value.parse::<DateTime<Utc>>()?),
-                    "Sort Album Artist" => {},
-                    "Sort Album" => {},
-                    "Sort Artist" => {},
-                    "Sort Composer" => {},
-                    "Sort Name" => {},
-                    "Total Time" => the_track.duration = Duration::from_millis(value.parse::<u64>()?),
-                    "Track Count" => the_track.total_tracks = Some(value.parse::<usize>()?),
-                    "Track ID" => the_track.id = value,
-                    "Track Number" => the_track.track_number = Some(value.parse::<usize>()?),
-                    "Track Type" => {},
-                    "Volume Adjustment" => {},
-                    "Work" => the_track.work = Some(value),
-                    "Year" => the_track.year = Some(value.parse::<usize>()?),
-                    // For any unknown key, if it's in IGNORED_KEYS or not recognized, log and skip.
+                    "Album Artist" => track.album_artist = Some(value),
+                    "Album Rating Computed" => {}
+                    "Album Rating" => track.album_rating = Some(value.parse::<usize>()?),
+                    "Album" => track.album_title = Some(value),
+                    "Artist" => track.artist = Some(value),
+                    "Artwork Count" => {}
+                    "BPM" => track.bpm = Some(value.parse::<usize>()?),
+                    "Bit Rate" => {}
+                    "Clean" => {}
+                    "Comments" => track.comments = Some(value),
+                    "Compilation" => track.compiltion = true,
+                    "Composer" => track.composer = Some(value),
+                    "Date Added" => track.date_added = value.parse::<DateTime<Utc>>()?,
+                    "Date Modified" => track.date_modified = value.parse::<DateTime<Utc>>()?,
+                    "Explicit" => {}
+                    "Disc Count" => track.disc_count = Some(value.parse::<usize>()?),
+                    "Disc Number" => track.disc_number = Some(value.parse::<usize>()?),
+                    "Disabled" => {}
+                    "Disliked" => {}
+                    "Favorited" => track.favourited = true,
+                    "File Folder Count" => {}
+                    "Genre" => track.genre = Some(value),
+                    "Grouping" => track.grouping = Some(value),
+                    "Kind" => {}
+                    "Library Folder Count" => {}
+                    "Location" => track.location = value,
+                    "Loved" => track.loved = true,
+                    "Movement Count" => {}
+                    "Movement Name" => track.movement_title = Some(value),
+                    "Movement Number" => track.movement_number = Some(value.parse::<usize>()?),
+                    "Name" => track.title = Some(value),
+                    "Normalization" => {}
+                    "Part Of Gapless Album" => {}
+                    "Persistent ID" => track.persistent_id = value,
+                    "Play Count" => track.play_count = value.parse::<usize>()?,
+                    "Play Date UTC" => track.play_date = Some(value.parse::<DateTime<Utc>>()?),
+                    "Play Date" => {} // use utc variant
+                    "Playlist Only" => {}
+                    "Purchased" => {}
+                    "Rating Computed" => {}
+                    "Rating" => track.rating = value.parse::<usize>()?,
+                    "Release Date" => track.release_data = Some(value.parse::<DateTime<Utc>>()?),
+                    "Sample Rate" => {}
+                    "Size" => track.size = value.parse::<usize>()?,
+                    "Skip Count" => track.skip_count = value.parse::<usize>()?,
+                    "Skip Date" => track.skip_date = Some(value.parse::<DateTime<Utc>>()?),
+                    "Sort Album Artist" => {}
+                    "Sort Album" => {}
+                    "Sort Artist" => {}
+                    "Sort Composer" => {}
+                    "Sort Name" => {}
+                    "Sort Series" => {}
+                    "Total Time" => track.duration = Duration::from_millis(value.parse::<u64>()?),
+                    "Track Count" => track.total_tracks = Some(value.parse::<usize>()?),
+                    "Track ID" => track.id = value,
+                    "Track Number" => track.track_number = Some(value.parse::<usize>()?),
+                    "Track Type" => {}
+                    "Volume Adjustment" => {}
+                    "Work" => track.work = Some(value),
+                    "Year" => track.year = Some(value.parse::<usize>()?),
+                    // For any unknown key, log and skip.
                     _ => {
-                        if IGNORED_KEYS.contains(&key.as_str()) {
-                            log::debug!(
-                                "Ignoring track key '{}' with value '{}' in track '{}'",
-                                key,
-                                value,
-                                the_track.title.as_deref().unwrap_or("[No title]")
-                            );
-                        } else {
-                            log::debug!(
-                                "Ignoring unexpected track key '{}' with value '{}' in track '{}' by '{}'",
-                                key,
-                                value,
-                                the_track.title.as_deref().unwrap_or("[No title]"),
-                                the_track.artist.as_deref().unwrap_or("[No artist]")
-                            );
-                        }
+                        log::debug!(
+                            "Ignoring track key '{key}' with value '{value}' in track '{}' by '{}'",
+                            track.title.as_deref().unwrap_or("[No title]"),
+                            track.artist.as_deref().unwrap_or("[No artist]")
+                        );
                         continue;
                     }
                 }
             }
-            XmlEvent::EndElement { name } => {
-                match name.local_name.as_str() {
-                    "dict" => {
-                        let _ = reader.forward();
-                        break;
-                    }
-                    _ => {
-                        return Err(err::LibraryXmlReader::UnexpectedKey {
-                            position: reader.parser.position(),
-                            key: name.local_name.to_owned(),
-                        })
-                    }
+            XmlEvent::EndElement { name } => match name.local_name.as_str() {
+                "dict" => {
+                    let _ = reader.forward();
+                    break;
                 }
+                _ => {
+                    return Err(err::LibraryXmlReader::UnexpectedKey {
+                        position: reader.parser.position(),
+                        key: name.local_name.to_owned(),
+                    })
+                }
+            },
+            _ => {
+                log::debug!(
+                    "Ignoring unexpected element '{:?}' in track dict",
+                    reader.peek()
+                );
+                let _ = reader.forward();
+                continue;
             }
-            _ => { let _ = reader.forward(); continue; }
         }
     }
-    Ok(the_track)
+    Ok(track)
 }
 
 impl Library {
@@ -138,27 +140,32 @@ impl Library {
         reader.eat_start("dict")?;
         loop {
             match reader.peek() {
-                XmlEvent::StartElement { name, .. } => {
-                    match name.local_name.as_str() {
-                        "key" => {
-                            let id = reader.element_as_string(Some("key"))?;
-                            let track = get_track(reader)?;
-                            assert_eq!(id, track.id);
-                            self.tracks.insert(id, track);
-                        }
-                        _ => {
-                            return Err(err::LibraryXmlReader::UnexpectedKey {
-                                position: reader.parser.position(),
-                                key: name.local_name.to_owned(),
-                            });
-                        }
+                XmlEvent::StartElement { name, .. } => match name.local_name.as_str() {
+                    "key" => {
+                        let id = reader.element_as_string(Some("key"))?;
+                        let track = get_track(reader)?;
+                        assert_eq!(id, track.id);
+                        self.tracks.insert(id, track);
                     }
-                }
+                    _ => {
+                        return Err(err::LibraryXmlReader::UnexpectedKey {
+                            position: reader.parser.position(),
+                            key: name.local_name.to_owned(),
+                        });
+                    }
+                },
                 XmlEvent::EndElement { .. } => {
                     reader.eat_end("dict")?;
                     break;
                 }
-                _ => { let _ = reader.forward(); continue; }
+                _ => {
+                    log::debug!(
+                        "Ignoring unexpected element '{:?}' in track array",
+                        reader.peek()
+                    );
+                    let _ = reader.forward();
+                    continue;
+                }
             }
         }
         Ok(())
